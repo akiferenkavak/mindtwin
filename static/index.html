@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>MindTwin Live Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #111;
+      color: #eee;
+      margin: 2rem;
+    }
+    h1 { margin-bottom: 1rem; }
+    #info { font-size: 1.2rem; margin-bottom: 1rem; }
+    #thermo {
+      width: 300px;
+      height: 20px;
+      background: #333;
+      border-radius: 10px;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+    #bar {
+      height: 100%;
+      width: 0%;
+      background: blue;
+      transition: all 0.3s ease;
+    }
+  </style>
+</head>
+<body>
+  <h1>🌡️ MindTwin Live Monitor</h1>
+  <div id="info">Connecting...</div>
+  <div id="thermo"><div id="bar"></div></div>
+  <canvas id="chart" width="600" height="300"></canvas>
+
+  <h2>Anomalies</h2>
+  <div id="alerts" style="max-height: 200px; overflow-y: auto;"></div>
+
+  <script>
+    const info = document.getElementById("info");
+    const bar = document.getElementById("bar");
+    const alerts = document.getElementById("alerts");
+    const ctx = document.getElementById("chart").getContext("2d");
+
+    const chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Max °C',
+        data: [],
+        borderColor: 'white',      // line color
+        backgroundColor: 'white',  // fill color if needed
+        tension: 0.2,
+        pointRadius: 5,
+        pointBackgroundColor: []   // array of colors for each point
+      }]
+    },
+    options: {
+      scales: {
+        x: { title: { display: true, text: 'Frame #'} },
+        y: { title: { display: true, text: 'Temperature (°C)'}, suggestedMin: 0, suggestedMax: 100 }
+      }
+    }
+  });
+
+
+    const ws = new WebSocket("ws://localhost:8000/ws");
+
+    ws.onmessage = (event) => {
+      const frame = JSON.parse(event.data);
+      const temp = frame.t_max;
+
+      // === Update thermometer ===
+      let color;
+      if (temp < 22) color = "blue";
+      else if (temp >= 22 && temp < 28) color = "green";
+      else if (temp >= 28 && temp < 30) color = "yellow";
+      else if (temp >= 30 && temp < 31) color = "orange";
+      else color = "red";
+
+      bar.style.background = color;
+      bar.style.width = Math.min(temp, 100) + "%";
+
+      // === Update text info ===
+      info.innerText = `Frame #${frame.frame_no} | Max: ${temp.toFixed(2)} °C`;
+
+      // === Update chart ===
+      chart.data.labels.push(frame.frame_no);
+      chart.data.datasets[0].data.push(temp);
+      chart.data.datasets[0].pointBackgroundColor.push(color); // color each point
+
+      // Keep only last 200 frames
+      const maxPoints = 200;
+      if (chart.data.labels.length > maxPoints) {
+          chart.data.labels.shift();
+          chart.data.datasets[0].data.shift();
+          chart.data.datasets[0].pointBackgroundColor.shift();
+      }
+
+      chart.update();
+
+      // === Show anomalies ===
+      if (temp >= 30) {
+          const msg = `⚠️ ${frame.timestamp} | ${temp.toFixed(2)}°C HIGH`;
+          const p = document.createElement("p");
+          p.innerText = msg;
+          p.style.color = "red";
+          alerts.appendChild(p);
+          alerts.scrollTop = alerts.scrollHeight;
+      }
+  };
+
+    ws.onclose = () => {
+      info.innerText = "Connection closed";
+    };
+  </script>
+</body>
+
+</html>

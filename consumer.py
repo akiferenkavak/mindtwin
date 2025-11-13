@@ -1,9 +1,16 @@
 # consumer.py  (canlı yazdırmalı sürüm)
-import json, socket, sys
+# producer.py tarafından gönderilen FramePacket JSON satırlarını TCP soketi üzerinden alır,
+# ayrıştırır ve içeriği canlı olarak konsola yazdırır.
+
+import json, socket, sys, threading, asyncio
 from typing import Optional
+from fastapi import FastAPI, WebSocket
+from fastapi.staticfiles import StaticFiles
+import uvicorn
 
 HOST = "127.0.0.1"
 PORT = 8765
+latest_frame = None # global variable to store the most recent frame
 
 class Sink:
     def __init__(self) -> None:
@@ -23,6 +30,7 @@ class Sink:
         self.frame_nos.append(int(obj.get("frame_no", -1)))
 
 def handle_client(conn: socket.socket, sink: Sink):
+    global latest_frame
     with conn:
         buf = b""
         while True:
@@ -38,6 +46,7 @@ def handle_client(conn: socket.socket, sink: Sink):
                 try:
                     obj = json.loads(line.decode("utf-8"))
                     sink.add(obj)
+                    latest_frame = obj # store latest frame here
 
                     # === CANLI YAZDIRMA ===
                     i = len(sink.mins) - 1
@@ -47,9 +56,11 @@ def handle_client(conn: socket.socket, sink: Sink):
                         f"min={sink.mins[i]:.2f}°C max={sink.maxs[i]:.2f}°C mean={sink.means[i]:.2f}°C | "
                         f"path={'None' if sink.image_paths[i] is None else sink.image_paths[i]}"
                     )
+                    comment = interpret_temp(sink.maxs[i])
+                    print(f"                        ↳ {comment}");
                     sys.stdout.flush()
 
-                    # (İsteğe bağlı mini-işlem örnekleri — aktif etmek için yorumları aç)
+                    # (İsteğe bağlı)
                     # window = 10
                     # if len(sink.means) >= window:
                     #     ma = sum(sink.means[-window:]) / window
@@ -91,5 +102,52 @@ def run_server():
 
     # Diziler hazır: sink.mins, sink.maxs, sink.means, sink.timestamps, sink.image_paths, sink.frame_nos
 
+# --- FastAPI setup ---
+app = FastAPI()
+
+# Serve static assets
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Serve index.html at root
+from fastapi.responses import FileResponse
+import os
+
+@app.get("/")
+def root():
+    return FileResponse(os.path.join("static", "index.html"))
+
+@app.get("/frames/latest")
+def get_latest():
+    if latest_frame is None:
+        return {"status": "no data yet"}
+    return latest_frame
+
+from fastapi import WebSocket
+
+@app.websocket("/ws")
+async def websocket_endpoint(ws: WebSocket):
+    await ws.accept()
+    global latest_frame
+    while True:
+        if latest_frame is not None:
+            try:
+                await ws.send_json(latest_frame)
+            except Exception as e:
+                print("WebSocket send error:", e)
+        await asyncio.sleep(0.5)  # shorter interval for smoother updates
+
+
+
+def interpret_temp(t_max: float,threshold: float=30.0) -> str:
+    if t_max >= threshold:
+        return "HIGH TEMPERATURE ALERT!"
+    else:
+        return "Temperature Normal."
+
 if __name__ == "__main__":
-    run_server()
+    # Start the TCP listener (producer → consumer stream) in background
+    t = threading.Thread(target=run_server, daemon=True)
+    t.start()
+
+    # Start FastAPI web server
+    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -9,7 +9,7 @@ from typing import Optional, Iterator
 # ==== CONFIG ====
 HOST = "127.0.0.1"
 PORT = 8765
-BASE_DIR = r"/Users/ekingucluel/Documents/GitHub/mindtwin/thermal_capture/thermal_capture"  # <- sadece bunu değiştir
+BASE_DIR = r"thermal_capture/thermal_capture"  
 SUMMARY_PATH = os.path.join(BASE_DIR, "capture_summary.txt")
 IMAGE_PATTERN = "frame_{:04d}.jpg"  # frame_0001.jpg gibi
 STRICT_IMAGE_CHECK = True  # True ise dosya yoksa image_path=None

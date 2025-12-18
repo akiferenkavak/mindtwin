@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Thermal Anomaly Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+
+    html, body {
+        background: #111 !important;
+        color: #eee !important;
+        margin: 0;
+        padding: 2rem;
+    }
+
+    /* === NAV ONLY – THERMAL SAFE === */
+    nav {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    }
+
+    nav .title {
+    margin-right: auto;
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: #eee;
+    }
+
+    nav a {
+    color: #9cc4ff;
+    text-decoration: none;
+    font-weight: 500;
+    padding: 0.45rem 0.9rem;
+    border-radius: 8px;
+    transition: background 0.2s ease, color 0.2s ease;
+    }
+
+    nav a:hover {
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    }
+    </style>
+
+
+</head>
+
+<body>
+
+<nav>
+  <div class="title">MindTwin</div>
+  <a href="/">Home</a>
+  <a href="/thermal">Thermal</a>
+  <a href="/torque">Torque</a>
+</nav>
+
+
+<h1>Thermal Anomaly Monitor</h1>
+<div id="info">Connecting...</div>
+<div id="thermo"><div id="bar"></div></div>
+<canvas id="chart" width="600" height="300"></canvas>
+
+<h2>Anomalies</h2>
+<div id="alerts" style="max-height: 200px; overflow-y: auto;"></div>
+
+<script>
+const info = document.getElementById("info");
+const bar = document.getElementById("bar");
+const alerts = document.getElementById("alerts");
+const ctx = document.getElementById("chart").getContext("2d");
+
+const chart = new Chart(ctx, {
+  type: 'line',
+  data: {
+    datasets: [{
+      label: 'Max °C',
+      data: [],
+      borderColor: 'white',
+      backgroundColor: 'rgba(255,255,255,0.05)',
+      tension: 0.2,
+      pointRadius: 5,
+      pointBackgroundColor: []
+    }]
+  },
+  options: {
+    animation: false,
+    responsive: true,
+    scales: {
+      x: {
+        type: 'linear',
+        title: { display: true, text: 'Frame #' },
+        min: 0,
+        max: 100
+      },
+      y: {
+        title: { display: true, text: 'Temperature (°C)' },
+        suggestedMin: 0,
+        suggestedMax: 100
+      }
+    },
+    plugins: {
+      legend: { labels: { color: '#ccc' } }
+    }
+  }
+});
+
+const ws = new WebSocket("ws://localhost:8000/ws");
+
+ws.onmessage = (event) => {
+  const frame = JSON.parse(event.data);
+  const temp = frame.t_max;
+  const color =
+    temp < 22 ? "blue" :
+    temp < 28 ? "green" :
+    temp < 30 ? "yellow" :
+    temp < 31 ? "orange" : "red";
+
+  bar.style.background = color;
+  bar.style.width = Math.min(temp, 100) + "%";
+  info.innerText = `Frame #${frame.frame_no} | Max: ${temp.toFixed(2)} °C`;
+
+  chart.data.datasets[0].data.push({x: frame.frame_no, y: temp});
+  chart.data.datasets[0].pointBackgroundColor.push(color);
+
+  const slideWindow = 100;
+
+  if (chart.data.datasets[0].data.length > slideWindow) {
+    chart.data.datasets[0].data.shift();
+    chart.data.datasets[0].pointBackgroundColor.shift();
+    const firstFrame = chart.data.datasets[0].data[0].x;
+    chart.options.scales.x.min = firstFrame;
+    chart.options.scales.x.max = firstFrame + slideWindow - 1;
+  }
+
+  chart.update('none');
+
+  if (temp >= 30) {
+    const p = document.createElement("p");
+    p.innerText = `⚠️ ${frame.timestamp} | ${temp.toFixed(2)}°C HIGH`;
+    p.style.color = "red";
+    alerts.appendChild(p);
+    alerts.scrollTop = alerts.scrollHeight;
+  }
+};
+
+ws.onclose = () => {
+  info.innerText = "Connection closed";
+};
+</script>
+
+</body>
+</html>

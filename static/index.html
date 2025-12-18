@@ -2,138 +2,102 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>MindTwin Live Monitor</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <title>MindTwin – ABB Robotic Arm Monitor</title>
   <style>
     body {
-      font-family: sans-serif;
-      background: #111;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: radial-gradient(circle at top, #1a1a1a, #0b0b0b);
       color: #eee;
-      margin: 2rem;
+      margin: 0;
+      padding: 0;
     }
-    h1 { margin-bottom: 1rem; }
-    #info { font-size: 1.2rem; margin-bottom: 1rem; }
-    #thermo {
-      width: 300px;
-      height: 20px;
-      background: #333;
-      border-radius: 10px;
-      overflow: hidden;
-      margin-bottom: 1.5rem;
+
+    header {
+      padding: 3rem 4rem;
+      border-bottom: 1px solid #222;
     }
-    #bar {
-      height: 100%;
-      width: 0%;
-      background: blue;
-      transition: all 0.3s ease;
+
+    h1 {
+      font-size: 2.2rem;
+      margin: 1.5rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    main {
+      padding: 3rem 4rem;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 2rem;
+    }
+
+    .card {
+      background: linear-gradient(180deg, #1b1b1b, #111);
+      border: 1px solid #222;
+      border-radius: 16px;
+      padding: 2rem;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      cursor: pointer;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    }
+
+    .card h2 {
+      margin: 0 0 0.5rem 0;
+      font-size: 1.5rem;
+    }
+
+    .card p {
+      color: #aaa;
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+
+    .icon {
+      font-size: 2rem;
+      margin-bottom: 1rem;
+      display: inline-block;
+    }
+
+    a {
+      text-decoration: none;
+      color: inherit;
     }
   </style>
 </head>
+
 <body>
-  <h1>MindTwin Live Monitor</h1>
-  <div id="info">Connecting...</div>
-  <div id="thermo"><div id="bar"></div></div>
-  <canvas id="chart" width="600" height="300"></canvas>
 
-  <h2>Anomalies</h2>
-  <div id="alerts" style="max-height: 200px; overflow-y: auto;"></div>
+<header>
+  <h1>MindTwin – ABB Robotic Arm Monitor</h1>
+</header>
 
-  <script>
-  const info = document.getElementById("info");
-  const bar = document.getElementById("bar");
-  const alerts = document.getElementById("alerts");
-  const ctx = document.getElementById("chart").getContext("2d");
+<main>
+  <a href="/thermal">
+    <div class="card">
+      <div class="icon"></div>
+      <h2>Thermal Monitor</h2>
+      <p>
+        Real-time thermal analysis of robotic arm components.
+        Detect overheating and abnormal temperature patterns.
+      </p>
+    </div>
+  </a>
 
-  const chart = new Chart(ctx, {
-      type: 'line',
-      data: {
-          datasets: [{
-              label: 'Max °C',
-              data: [],
-              borderColor: 'white',
-              backgroundColor: 'rgba(255,255,255,0.05)',
-              tension: 0.2,
-              pointRadius: 5,
-              pointBackgroundColor: []
-          }]
-      },
-      options: {
-          animation: false,
-          responsive: true,
-          scales: {
-              x: {
-                  type: 'linear',
-                  title: { display: true, text: 'Frame #' },
-                  min: 0,
-                  max: 100
-              },
-              y: {
-                  title: { display: true, text: 'Temperature (°C)' },
-                  suggestedMin: 0,
-                  suggestedMax: 100
-              }
-          },
-          plugins: {
-              legend: { labels: { color: '#ccc' } }
-          }
-      }
-  });
-
-  // === CREATE WEBSOCKET ===
-  const ws = new WebSocket("ws://localhost:8000/ws");
-
-  ws.onmessage = (event) => {
-      const frame = JSON.parse(event.data);
-      const temp = frame.t_max;
-      const color = temp < 22 ? "blue" : temp < 28 ? "green" : temp < 30 ? "yellow" : temp < 31 ? "orange" : "red";
-
-      bar.style.background = color;
-      bar.style.width = Math.min(temp, 100) + "%";
-      info.innerText = `Frame #${frame.frame_no} | Max: ${temp.toFixed(2)} °C`;
-
-      // push new point
-      chart.data.datasets[0].data.push({x: frame.frame_no, y: temp});
-      chart.data.datasets[0].pointBackgroundColor.push(color);
-
-      // sliding window: show only last 150 frames
-      const slideWindow = 100;
-
-      // push new point
-      chart.data.datasets[0].data.push({x: frame.frame_no, y: temp});
-      chart.data.datasets[0].pointBackgroundColor.push(color);
-
-      if (chart.data.datasets[0].data.length > slideWindow) {
-          // remove oldest point
-          chart.data.datasets[0].data.shift();
-          chart.data.datasets[0].pointBackgroundColor.shift();
-          // slide axis to last `slideWindow` points
-          const firstFrame = chart.data.datasets[0].data[0].x;
-          chart.options.scales.x.min = firstFrame;
-          chart.options.scales.x.max = firstFrame + slideWindow - 1;
-      } else {
-          // for first 150 points, fix x-axis min=0, max=150
-          chart.options.scales.x.min = 0;
-          chart.options.scales.x.max = slideWindow - 1;
-      }
-
-      chart.update('none');
-
-
-      // show anomalies
-      if (temp >= 30) {
-          const p = document.createElement("p");
-          p.innerText = `⚠️ ${frame.timestamp} | ${temp.toFixed(2)}°C HIGH`;
-          p.style.color = "red";
-          alerts.appendChild(p);
-          alerts.scrollTop = alerts.scrollHeight;
-      }
-  };
-
-  ws.onclose = () => {
-      info.innerText = "Connection closed";
-  };
-  </script>
+  <a href="/torque">
+    <div class="card">
+      <div class="icon"></div>
+      <h2>Torque Anomaly Monitor</h2>
+      <p>
+        Joint-level torque comparison against ideal values.
+        Early detection of mechanical anomalies.
+      </p>
+    </div>
+  </a>
+</main>
 
 </body>
-
 </html>

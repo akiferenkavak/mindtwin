@@ -12,6 +12,9 @@ HOST = "127.0.0.1"
 PORT = 8765
 latest_frame = None # global variable to store the most recent frame
 
+PORT_TORQUE = 8766
+latest_torque = None
+
 class Sink:
     def __init__(self) -> None:
         self.timestamps: list[str] = []
@@ -102,6 +105,45 @@ def run_server():
 
     # Diziler hazır: sink.mins, sink.maxs, sink.means, sink.timestamps, sink.image_paths, sink.frame_nos
 
+
+def run_torque_server():
+    global latest_torque
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind((HOST, PORT_TORQUE))
+    srv.listen(1)
+    print(f"[torque] listening on {HOST}:{PORT_TORQUE} ...")
+    conn, addr = srv.accept()
+    print(f"[torque] connected from {addr}")
+
+    buf = b""
+    with conn:
+        while True:
+            chunk = conn.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                if not line.strip():
+                    continue
+
+                pkt = json.loads(line.decode("utf-8"))
+                diffs, flags = detect_torque_anomaly(
+                    pkt["torque_actual"],
+                    pkt["torque_ideal"]
+                )
+
+                pkt["diffs"] = diffs
+                pkt["anomaly"] = any(flags)
+                latest_torque = pkt
+
+                print(
+                    f"[torque] frame={pkt['frame_no']} "
+                    f"anomaly={pkt['anomaly']} diffs={diffs}"
+                )
+
+
 # --- FastAPI setup ---
 app = FastAPI()
 
@@ -115,6 +157,15 @@ import os
 @app.get("/")
 def root():
     return FileResponse(os.path.join("static", "index.html"))
+
+@app.get("/thermal")
+def thermal_page():
+    return FileResponse(os.path.join("static", "thermal.html"))
+
+@app.get("/torque")
+def torque_page():
+    return FileResponse(os.path.join("static", "torque.html"))
+
 
 @app.get("/frames/latest")
 def get_latest():
@@ -136,6 +187,15 @@ async def websocket_endpoint(ws: WebSocket):
                 print("WebSocket send error:", e)
         await asyncio.sleep(0.5)  # shorter interval for smoother updates
 
+@app.websocket("/ws/torque")
+async def torque_ws(ws: WebSocket):
+    await ws.accept()
+    global latest_torque
+    while True:
+        if latest_torque is not None:
+            await ws.send_json(latest_torque)
+        await asyncio.sleep(0.5)
+
 
 
 def interpret_temp(t_max: float,threshold: float=30.0) -> str:
@@ -144,10 +204,18 @@ def interpret_temp(t_max: float,threshold: float=30.0) -> str:
     else:
         return "Temperature Normal."
 
+def detect_torque_anomaly(actual, ideal, threshold=0.3):
+    diffs = [abs(a - i) for a, i in zip(actual, ideal)]
+    flags = [d > threshold for d in diffs]
+    return diffs, flags
+
 if __name__ == "__main__":
     # Start the TCP listener (producer → consumer stream) in background
     t = threading.Thread(target=run_server, daemon=True)
     t.start()
+
+    t2 = threading.Thread(target=run_torque_server, daemon=True)
+    t2.start()
 
     # Start FastAPI web server
     uvicorn.run(app, host="0.0.0.0", port=8000)

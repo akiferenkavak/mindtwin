@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Torque Anomaly Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+
+    html, body {
+        background: #111 !important;
+        color: #eee !important;
+        margin: 0;
+        padding: 2rem;
+    }
+
+    nav {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    }
+
+    nav .title {
+    margin-right: auto;
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: #eee;
+    }
+
+    nav a {
+    color: #9cc4ff;
+    text-decoration: none;
+    font-weight: 500;
+    padding: 0.45rem 0.9rem;
+    border-radius: 8px;
+    transition: background 0.2s ease, color 0.2s ease;
+    }
+
+    nav a:hover {
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    }
+
+    #status {
+    margin-top: 1rem;
+    font-size: 1.1rem;
+    letter-spacing: 0.3px;
+    }
+    </style>
+
+</head>
+
+<body>
+
+<nav>
+  <div class="title">MindTwin</div>
+  <a href="/">Home</a>
+  <a href="/thermal">Thermal</a>
+  <a href="/torque">Torque</a>
+</nav>
+
+
+<h1>Torque Anomaly Monitor</h1>
+
+<canvas id="chart" width="700" height="350"></canvas>
+<div id="status">Waiting for data…</div>
+
+<script>
+const JOINTS = 6;
+const ctx = document.getElementById("chart").getContext("2d");
+const statusDiv = document.getElementById("status");
+
+const datasets = Array.from({length: JOINTS}, (_, i) => ({
+  label: `Joint ${i + 1}`,
+  data: [],
+  borderWidth: 2
+}));
+
+datasets.push({
+  label: "Threshold",
+  data: [],
+  borderDash: [5,5],
+  borderColor: "red",
+  borderWidth: 2
+});
+
+const chart = new Chart(ctx, {
+  type: "line",
+  data: { datasets },
+  options: {
+    animation: false,
+    scales: {
+      x: { type: "linear", title: { display: true, text: "Frame #" } },
+      y: { title: { display: true, text: "Torque Difference" }, suggestedMin: 0, suggestedMax: 1 }
+    },
+    plugins: {
+      legend: { labels: { color: "#ccc" } }
+    }
+  }
+});
+
+const ws = new WebSocket("ws://localhost:8000/ws/torque");
+
+ws.onmessage = (event) => {
+  const pkt = JSON.parse(event.data);
+
+  pkt.diffs.forEach((d, i) => {
+    datasets[i].data.push({ x: pkt.frame_no, y: d });
+  });
+
+  datasets[JOINTS].data.push({ x: pkt.frame_no, y: 0.3 });
+
+  statusDiv.innerText = pkt.anomaly ? "⚠️ TORQUE ANOMALY DETECTED" : "Normal";
+  statusDiv.style.color = pkt.anomaly ? "red" : "lightgreen";
+
+  chart.update("none");
+};
+</script>
+
+</body>
+</html>

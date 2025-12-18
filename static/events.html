@@ -19,20 +19,24 @@ nav {
   display: flex;
   gap: 1rem;
   margin-bottom: 2rem;
+  border-radius: 12px;
 }
 
 nav a {
   color: #aaa;
   text-decoration: none;
-  font-weight: 500;
+  font-weight: 600;
+  padding: 0.45rem 0.9rem;
+  border-radius: 8px;
 }
 
-nav a:hover { color: #fff; }
+nav a:hover { color: #fff; background: rgba(71,132,230,0.788); }
 
 h1 {
   display: flex;
   align-items: center;
   gap: 1rem;
+  margin: 0 0 1rem 0;
 }
 
 .badge {
@@ -40,6 +44,7 @@ h1 {
   padding: 0.25rem 0.6rem;
   border-radius: 6px;
   font-size: 0.8rem;
+  font-weight: 700;
 }
 
 .filters {
@@ -60,7 +65,12 @@ select {
 #counter {
   margin: 0.5rem 0 1.5rem 0;
   color: #f87171;
-  font-weight: 500;
+  font-weight: 600;
+}
+
+#status {
+  margin-bottom: 1rem;
+  color: #ccc;
 }
 
 .event {
@@ -68,17 +78,18 @@ select {
   padding: 0.75rem 1rem;
   margin-bottom: 0.75rem;
   background: #181818;
-  border-radius: 6px;
+  border-radius: 10px;
 }
 
-.event.CRITICAL { border-color: red; }
-.event.WARNING  { border-color: orange; }
+.event.CRITICAL { border-color: #ff3b3b; }
+.event.WARNING  { border-color: #ffa500; }
 .event.INFO     { border-color: #4da6ff; }
 
 .meta {
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   color: #aaa;
-  margin-top: 0.3rem;
+  margin-top: 0.45rem;
+  line-height: 1.35;
 }
 </style>
 </head>
@@ -86,16 +97,20 @@ select {
 <body>
 
 <nav>
+  <div class="title">MindTwin</div>
   <a href="/">Home</a>
   <a href="/thermal">Thermal</a>
   <a href="/torque">Torque</a>
   <a href="/events">Events</a>
 </nav>
 
+
 <h1>
   System Events
   <span id="criticalCount"></span>
 </h1>
+
+<div id="status">Waiting for events…</div>
 
 <div class="filters">
   <select id="timeFilter">
@@ -124,83 +139,119 @@ select {
 <div id="events"></div>
 
 <script>
-async function fetchErrors() {
-  const res = await fetch("/errors");
-  const data = await res.json();
+const seen = new Set();
+const MAX_SHOW = 200;
 
-  const eventsDiv = document.getElementById("events");
-  const counterDiv = document.getElementById("counter");
-  const criticalBadge = document.getElementById("criticalCount");
+const eventsDiv = document.getElementById("events");
+const statusDiv = document.getElementById("status");
+const counterDiv = document.getElementById("counter");
+const criticalBadge = document.getElementById("criticalCount");
 
-  eventsDiv.innerHTML = "";
-  counterDiv.innerText = "";
-  criticalBadge.innerHTML = "";
+function fmtTime(iso) {
+  return iso ? iso.replace("T"," ").split(".")[0] : "";
+}
 
-  const timeFilter  = document.getElementById("timeFilter").value;
-  const typeFilter  = document.getElementById("typeFilter").value;
-  const jointFilter = document.getElementById("jointFilter").value;
+function num2(x) {
+  return (typeof x === "number") ? x.toFixed(2) : "-";
+}
 
-  const now = Date.now();
-  let criticalCount = 0;
-  let jointEventCount = 0;
-
-  data.slice().reverse().forEach(e => {
-
-    // TYPE FILTER
-    if (typeFilter !== "all" && e.type !== typeFilter) return;
-
-    // TIME FILTER
-    if (timeFilter === "5") {
-      const t = new Date(e.timestamp).getTime();
-      if (now - t > 5 * 60 * 1000) return;
-    }
-
-    // JOINT FILTER
-    if (e.type === "TORQUE" && jointFilter !== "all") {
-      if (String(e.meta.joint) !== jointFilter) return;
-      jointEventCount++;
-    }
-
-    if (e.severity === "CRITICAL") criticalCount++;
-
-    const div = document.createElement("div");
-    div.className = `event ${e.severity}`;
-    div.innerHTML = `
-      <b>${e.type}</b> — ${e.severity}<br/>
-      ${e.message}
-      <div class="meta">
-        ${JSON.stringify(e.meta)}<br/>
-        ${e.timestamp}
-      </div>
-    `;
-    eventsDiv.appendChild(div);
-  });
-
-  // BADGES
-  if (criticalCount > 0) {
-    criticalBadge.innerHTML =
-      `<span class="badge">${criticalCount} CRITICAL</span>`;
+function fmtMeta(type, meta = {}) {
+  if (type === "TORQUE") {
+    return `Joint ${meta.joint} | Δ=${num2(meta.diff)} (thr=${meta.threshold}) | Frame ${meta.frame_no}`;
   }
+  return JSON.stringify(meta);
+}
 
-  // JOINT COUNTER
-  if (typeFilter === "TORQUE" && jointFilter !== "all") {
-    counterDiv.innerText =
-      `Joint ${jointFilter} anomaly events: ${jointEventCount}`;
+function keyOf(e) {
+  return `${e.timestamp}|${e.type}|${e.severity}|${e.message}`;
+}
+
+function addEvent(e) {
+  const div = document.createElement("div");
+  div.className = `event ${e.severity || "INFO"}`;
+  div.innerHTML = `
+    <b>${e.type}</b> — ${e.severity}<br/>
+    ${e.message}
+    <div class="meta">
+      ${fmtMeta(e.type, e.meta)}<br/>
+      ${fmtTime(e.timestamp)}
+    </div>
+  `;
+  eventsDiv.prepend(div);
+}
+
+async function poll() {
+  try {
+    const res = await fetch("/errors", { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    statusDiv.textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+    statusDiv.style.color = "#ccc";
+
+    // Filtreler
+    const timeFilter  = document.getElementById("timeFilter").value;
+    const typeFilter  = document.getElementById("typeFilter").value;
+    const jointFilter = document.getElementById("jointFilter").value;
+
+    const now = Date.now();
+
+    // HTML'i tek string olarak oluştur (flicker minimum)
+    let html = "";
+    let criticalCount = 0;
+
+    // En yeniler üstte görünsün diye reverse
+    data.slice().reverse().forEach(e => {
+      // TYPE
+      if (typeFilter !== "all" && e.type !== typeFilter) return;
+
+      // TIME
+      if (timeFilter === "5") {
+        const t = new Date(e.timestamp).getTime();
+        if (now - t > 5 * 60 * 1000) return;
+      }
+
+      // JOINT
+      if (e.type === "TORQUE" && jointFilter !== "all") {
+        if (String(e.meta?.joint) !== jointFilter) return;
+      }
+
+      if (e.severity === "CRITICAL") criticalCount++;
+
+      html += `
+        <div class="event ${e.severity || "INFO"}">
+          <b>${e.type || "EVENT"}</b> — ${e.severity || "INFO"}<br/>
+          ${e.message || ""}
+          <div class="meta">
+            ${fmtMeta(e.type, e.meta || {})}<br/>
+            ${fmtTime(e.timestamp)}
+          </div>
+        </div>
+      `;
+    });
+
+    // Tek seferde bas
+    eventsDiv.innerHTML = html || `<div class="meta">No events yet.</div>`;
+
+    criticalBadge.innerHTML =
+      criticalCount > 0 ? `<span class="badge">${criticalCount} CRITICAL</span>` : "";
+
+  } catch (e) {
+    statusDiv.textContent = `Cannot load /errors — ${e.message}`;
+    statusDiv.style.color = "#f87171";
   }
 }
 
-// ENABLE / DISABLE JOINT FILTER
+
+
+
 document.getElementById("typeFilter").addEventListener("change", () => {
-  const joint = document.getElementById("jointFilter");
-  joint.disabled = document.getElementById("typeFilter").value !== "TORQUE";
-  fetchErrors();
+  document.getElementById("jointFilter").disabled =
+    document.getElementById("typeFilter").value !== "TORQUE";
 });
 
-document.getElementById("timeFilter").addEventListener("change", fetchErrors);
-document.getElementById("jointFilter").addEventListener("change", fetchErrors);
-
-setInterval(fetchErrors, 1000);
-fetchErrors();
+setInterval(poll, 1000);
+poll();
 </script>
 
 </body>

@@ -1,4 +1,4 @@
-# mindtwin
+# mindstwin
 
 UI images:
 

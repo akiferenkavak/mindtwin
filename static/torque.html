@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Torque Anomaly Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+
+    html, body {
+        background: #111 !important;
+        color: #eee !important;
+        margin: 0;
+        padding: 2rem;
+    }
+
+    nav {
+    background: #171616;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    padding: 1rem 2.5rem;
+    }
+
+    nav .title {
+    margin-right: auto;
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: #911212;
+    }
+
+    nav a {
+    color: #945151;
+    text-decoration: none;
+    font-weight: 500;
+    padding: 0.45rem 0.9rem;
+    border-radius: 8px;
+    transition: background 0.2s ease, color 0.2s ease;
+    }
+
+    nav a:hover {
+    background: rgba(71, 132, 230, 0.788);
+    color: #fff;
+    }
+
+    #status {
+    margin-top: 1rem;
+    font-size: 1.1rem;
+    letter-spacing: 0.3px;
+    }
+    </style>
+
+</head>
+
+<body>
+
+<nav>
+  <div class="title">MindTwin</div>
+  <a href="/">Home</a>
+  <a href="/thermal">Thermal</a>
+  <a href="/torque">Torque</a>
+  <a href="/events">Events</a>
+</nav>
+
+
+<h1>Torque Anomaly Monitor</h1>
+
+<canvas id="chart" width="700" height="350"></canvas>
+<div id="status">Waiting for data…</div>
+
+<script>
+const SLIDE_WINDOW = 30;
+const JOINTS = 6;
+const TORQUE_THRESHOLD = 0.45;
+const ctx = document.getElementById("chart").getContext("2d");
+const statusDiv = document.getElementById("status");
+
+const JOINT_COLORS = [
+  "#4da6ff", // Joint 1 - blue
+  "#22c55e", // Joint 2 - green
+  "#eab308", // Joint 3 - yellow
+  "#f97316", // Joint 4 - orange
+  "#ef4444", // Joint 5 - red
+  "#a855f7"  // Joint 6 - purple
+];
+
+
+const datasets = Array.from({ length: JOINTS }, (_, i) => ({
+  label: `Joint ${i + 1}`,
+  data: [],
+  borderColor: JOINT_COLORS[i],
+  backgroundColor: JOINT_COLORS[i],
+  pointBackgroundColor: JOINT_COLORS[i],
+  pointRadius: 4,
+  borderWidth: 2,
+  tension: 0.2
+}));
+
+
+datasets.push({
+  label: "Threshold",
+  data: [],
+  borderDash: [5,5],
+  borderColor: "red",
+  borderWidth: 2
+});
+
+const chart = new Chart(ctx, {
+  type: "line",
+  data: { datasets },
+  options: {
+    animation: false,
+    scales: {
+      x: { type: "linear", title: { display: true, text: "Frame #" } },
+      y: { title: { display: true, text: "Torque Difference" }, suggestedMin: 0, suggestedMax: 1 }
+    },
+    plugins: {
+      legend: { labels: { color: "#ccc" } }
+    }
+  }
+});
+
+const ws = new WebSocket("ws://localhost:8000/ws/torque");
+
+ws.onmessage = (event) => {
+  const pkt = JSON.parse(event.data);
+
+  // PUSH DATA
+  pkt.diffs.forEach((d, i) => {
+    datasets[i].data.push({ x: pkt.frame_no, y: d });
+
+    // WINDOW TRIM
+    if (datasets[i].data.length > SLIDE_WINDOW) {
+      datasets[i].data.shift();
+    }
+  });
+
+  // threshold line
+  datasets[JOINTS].data.push({ x: pkt.frame_no, y: TORQUE_THRESHOLD });
+  if (datasets[JOINTS].data.length > SLIDE_WINDOW) {
+    datasets[JOINTS].data.shift();
+  }
+
+  //X-AXIS SLIDING
+  chart.options.scales.x.min =
+    Math.max(pkt.frame_no - SLIDE_WINDOW + 1, 0);
+  chart.options.scales.x.max = pkt.frame_no;
+
+  // STATUS
+  statusDiv.innerText = pkt.anomaly
+    ? "⚠️ TORQUE ANOMALY DETECTED"
+    : "Normal";
+
+  statusDiv.style.color = pkt.anomaly ? "red" : "lightgreen";
+
+  chart.update("none");
+};
+
+</script>
+
+</body>
+</html>

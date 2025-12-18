@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Thermal Anomaly Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+
+    html, body {
+        background: #111 !important;
+        color: #eee !important;
+        margin: 0;
+        padding: 2rem;
+    }
+
+    nav {
+    background: #171616;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    padding: 1rem 2.5rem;
+    }
+
+    nav .title {
+    margin-right: auto;
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: #911212;
+    }
+
+    nav a {
+    color: #945151;
+    text-decoration: none;
+    font-weight: 500;
+    padding: 0.45rem 0.9rem;
+    border-radius: 8px;
+    transition: background 0.2s ease, color 0.2s ease;
+    }
+
+    nav a:hover {
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    }
+    </style>
+
+
+</head>
+
+<body>
+
+<nav>
+  <div class="title">MindTwin</div>
+  <a href="/">Home</a>
+  <a href="/thermal">Thermal</a>
+  <a href="/torque">Torque</a>
+  <a href="/events">Events</a>
+</nav>
+
+
+<h1>Thermal Anomaly Monitor</h1>
+<div id="info">Connecting...</div>
+<div id="thermo"><div id="bar"></div></div>
+<canvas id="chart" width="600" height="300"></canvas>
+
+<h2>Anomalies</h2>
+<div id="alerts" style="max-height: 200px; overflow-y: auto;"></div>
+
+<script>
+const info = document.getElementById("info");
+const bar = document.getElementById("bar");
+const alerts = document.getElementById("alerts");
+const ctx = document.getElementById("chart").getContext("2d");
+
+const chart = new Chart(ctx, {
+  type: 'line',
+  data: {
+    datasets: [{
+      label: 'Max °C',
+      data: [],
+      spanGaps: false,
+      parsing: false,
+      borderColor: 'white',
+      backgroundColor: 'rgba(255,255,255,0.05)',
+      tension: 0.2,
+      pointRadius: 5,
+      pointBackgroundColor: []
+    }]
+  },
+  options: {
+    animation: false,
+    responsive: true,
+    scales: {
+      x: {
+        type: 'linear',
+        title: { display: true, text: 'Frame #' }
+      },
+      y: {
+        title: { display: true, text: 'Temperature (°C)' },
+        suggestedMin: 0,
+        suggestedMax: 100
+      }
+    },
+    plugins: {
+      legend: { labels: { color: '#ccc' } }
+    }
+  }
+});
+
+async function loadHistory() {
+  const res = await fetch("/frames/history");
+  const data = await res.json();
+
+  const dataset = chart.data.datasets[0];
+
+  data.forEach(frame => {
+    const temp = frame.t_max;
+
+    const color =
+      temp < 22 ? "blue" :
+      temp < 28 ? "green" :
+      temp < 30 ? "yellow" :
+      temp < 31 ? "orange" : "red";
+
+    dataset.data.push({
+      x: frame.frame_no,
+      y: temp
+    });
+
+    dataset.pointBackgroundColor.push(color);
+  });
+
+  if (data.length > 0) {
+    const last = data[data.length - 1].frame_no;
+    chart.options.scales.x.max = last;
+    chart.options.scales.x.min = Math.max(last - SLIDE_WINDOW + 1, 0);
+    chart.update("none");
+  }
+}
+
+
+loadHistory();
+
+
+
+const ws = new WebSocket("ws://localhost:8000/ws");
+
+const SLIDE_WINDOW = 100;
+
+ws.onmessage = (event) => {
+  const frame = JSON.parse(event.data);
+  const temp = frame.t_max;
+
+  const color =
+    temp < 22 ? "blue" :
+    temp < 28 ? "green" :
+    temp < 30 ? "yellow" :
+    temp < 31 ? "orange" : "red";
+
+  bar.style.background = color;
+  bar.style.width = Math.min(temp, 100) + "%";
+
+  info.innerText = `Frame #${frame.frame_no} | Max: ${temp.toFixed(2)} °C`;
+
+  const dataset = chart.data.datasets[0];
+
+  // push point
+  dataset.data.push({ x: frame.frame_no, y: temp });
+  dataset.pointBackgroundColor.push(color);
+
+  // trim buffer
+  if (dataset.data.length > SLIDE_WINDOW) {
+    dataset.data.shift();
+    dataset.pointBackgroundColor.shift();
+  }
+
+  // Follow the latest frame
+  chart.options.scales.x.max = frame.frame_no;
+  chart.options.scales.x.min = Math.max(
+    frame.frame_no - SLIDE_WINDOW + 1,
+    0
+  );
+
+  chart.update('none');
+
+  if (temp >= 30) {
+    const p = document.createElement("p");
+    p.innerText = `⚠️ ${frame.timestamp} | ${temp.toFixed(2)}°C HIGH`;
+    p.style.color = "red";
+    alerts.appendChild(p);
+    alerts.scrollTop = alerts.scrollHeight;
+  }
+};
+
+window.addEventListener("beforeunload", () => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.close();
+  }
+});
+
+
+ws.onclose = () => {
+  info.innerText = "Connection closed";
+};
+</script>
+
+</body>
+</html>

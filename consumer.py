@@ -2,15 +2,40 @@
 # producer.py tarafından gönderilen FramePacket JSON satırlarını TCP soketi üzerinden alır,
 # ayrıştırır ve içeriği canlı olarak konsola yazdırır.
 
-import json, socket, sys, threading, asyncio
+import json, socket, sys, threading, asyncio, os
 from typing import Optional
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
 import uvicorn
+import time
+from collections import deque
 
 HOST = "127.0.0.1"
 PORT = 8765
+
+EVENTS_LOG_FILE = "events.log"
 latest_frame = None # global variable to store the most recent frame
+
+PORT_TORQUE = 8766
+latest_torque = None
+
+error_log = []
+last_error_time = {}
+ERROR_COOLDOWN = 5.0  # saniye
+
+FRAME_HISTORY_SIZE = 200
+frame_history = deque(maxlen=FRAME_HISTORY_SIZE)
+TORQUE_THRESHOLD = 0.47
+
+# LOAD EXISTING EVENTS FROM FILE
+if os.path.exists(EVENTS_LOG_FILE):
+    with open(EVENTS_LOG_FILE, "r") as f:
+        for line in f:
+            try:
+                error_log.append(json.loads(line))
+            except Exception:
+                pass
+
 
 class Sink:
     def __init__(self) -> None:
@@ -48,7 +73,9 @@ def handle_client(conn: socket.socket, sink: Sink):
                     sink.add(obj)
                     latest_frame = obj # store latest frame here
 
-                    # === CANLI YAZDIRMA ===
+                    frame_history.append(obj)
+
+                    # CANLI YAZDIRMA
                     i = len(sink.mins) - 1
                     print(
                         f"[live] #{sink.frame_nos[i]:04d} | "
@@ -57,14 +84,42 @@ def handle_client(conn: socket.socket, sink: Sink):
                         f"path={'None' if sink.image_paths[i] is None else sink.image_paths[i]}"
                     )
                     comment = interpret_temp(sink.maxs[i])
+                    if sink.maxs[i] >= 30.0:
+                        key = ("THERMAL", sink.frame_nos[i])
+                        now = time.time()
+
+                        if key not in last_error_time or now - last_error_time[key] > ERROR_COOLDOWN:
+
+                            t_max = sink.maxs[i]
+
+                            # SEVERITY HESABI
+                            if t_max > 33.0:
+                                severity = "CRITICAL"
+                            elif t_max > 30.0:
+                                severity = "WARNING"
+                            else:
+                                severity = "INFO"
+
+                            event = {
+                                "timestamp": obj["timestamp"],
+                                "type": "THERMAL",
+                                "severity": severity,
+                                "message": "High temperature detected",
+                                "meta": {
+                                    "t_max": t_max,
+                                    "threshold": 30.0,
+                                    "frame_no": sink.frame_nos[i]
+                                }
+                            }
+                            error_log.append(event)
+                            last_error_time[key] = now
+
+                            with open(EVENTS_LOG_FILE, "a") as f:
+                                f.write(json.dumps(event) + "\n")
+
+
                     print(f"                        ↳ {comment}");
                     sys.stdout.flush()
-
-                    # (İsteğe bağlı)
-                    # window = 10
-                    # if len(sink.means) >= window:
-                    #     ma = sum(sink.means[-window:]) / window
-                    #     print(f"        ↳ running_mean({window}) = {ma:.2f}°C"); sys.stdout.flush()
 
                 except Exception as e:
                     print("[consumer] parse error:", e); sys.stdout.flush()
@@ -100,9 +155,84 @@ def run_server():
         print("\n-- last --")
         for i in tail: show(i)
 
-    # Diziler hazır: sink.mins, sink.maxs, sink.means, sink.timestamps, sink.image_paths, sink.frame_nos
 
-# --- FastAPI setup ---
+
+def run_torque_server():
+    global latest_torque
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind((HOST, PORT_TORQUE))
+    srv.listen(1)
+    print(f"[torque] listening on {HOST}:{PORT_TORQUE} ...")
+    conn, addr = srv.accept()
+    print(f"[torque] connected from {addr}")
+
+    buf = b""
+    with conn:
+        while True:
+            chunk = conn.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                if not line.strip():
+                    continue
+
+                pkt = json.loads(line.decode("utf-8"))
+                diffs, flags = detect_torque_anomaly(
+                    pkt["torque_actual"],
+                    pkt["torque_ideal"]
+                )
+
+                pkt["diffs"] = diffs
+                pkt["anomaly"] = any(flags)
+
+                if pkt["anomaly"]:
+                    for j, d in enumerate(pkt["diffs"]):
+                        if d > TORQUE_THRESHOLD:
+                            key = ("TORQUE", j + 1)
+                            now = time.time()
+
+                            if key not in last_error_time or now - last_error_time[key] > ERROR_COOLDOWN:
+
+                                # SEVERITY HESABI
+                                if d > 0.6:
+                                    severity = "CRITICAL"
+                                elif d > 0.3:
+                                    severity = "WARNING"
+                                else:
+                                    severity = "INFO"
+
+                                event = {
+                                    "timestamp": pkt["timestamp"],
+                                    "type": "TORQUE",
+                                    "severity": severity,
+                                    "message": f"Joint {j+1} torque exceeded threshold",
+                                    "meta": {
+                                        "joint": j + 1,
+                                        "diff": d,
+                                        "threshold": TORQUE_THRESHOLD,
+                                        "frame_no": pkt["frame_no"]
+                                    }
+                                }
+                                error_log.append(event)
+                                with open(EVENTS_LOG_FILE, "a") as f:
+                                    f.write(json.dumps(event) + "\n")
+
+                                last_error_time[key] = now
+
+
+
+                latest_torque = pkt
+
+                print(
+                    f"[torque] frame={pkt['frame_no']} "
+                    f"anomaly={pkt['anomaly']} diffs={diffs}"
+                )
+
+
+# FastAPI setup
 app = FastAPI()
 
 # Serve static assets
@@ -116,11 +246,32 @@ import os
 def root():
     return FileResponse(os.path.join("static", "index.html"))
 
+@app.get("/thermal")
+def thermal_page():
+    return FileResponse(os.path.join("static", "thermal.html"))
+
+@app.get("/torque")
+def torque_page():
+    return FileResponse(os.path.join("static", "torque.html"))
+
+@app.get("/events")
+def events_page():
+    return FileResponse(os.path.join("static", "events.html"))
+
 @app.get("/frames/latest")
 def get_latest():
     if latest_frame is None:
         return {"status": "no data yet"}
     return latest_frame
+
+@app.get("/frames/history")
+def get_frame_history():
+    return list(frame_history)
+
+@app.get("/errors")
+def get_errors():
+    return error_log[-200:]
+
 
 from fastapi import WebSocket
 
@@ -136,6 +287,15 @@ async def websocket_endpoint(ws: WebSocket):
                 print("WebSocket send error:", e)
         await asyncio.sleep(0.5)  # shorter interval for smoother updates
 
+@app.websocket("/ws/torque")
+async def torque_ws(ws: WebSocket):
+    await ws.accept()
+    global latest_torque
+    while True:
+        if latest_torque is not None:
+            await ws.send_json(latest_torque)
+        await asyncio.sleep(0.5)
+
 
 
 def interpret_temp(t_max: float,threshold: float=30.0) -> str:
@@ -144,10 +304,19 @@ def interpret_temp(t_max: float,threshold: float=30.0) -> str:
     else:
         return "Temperature Normal."
 
+def detect_torque_anomaly(actual, ideal):
+    diffs = [abs(a - i) for a, i in zip(actual, ideal)]
+    flags = [d > TORQUE_THRESHOLD for d in diffs]
+    return diffs, flags
+
+
 if __name__ == "__main__":
     # Start the TCP listener (producer → consumer stream) in background
     t = threading.Thread(target=run_server, daemon=True)
     t.start()
+
+    t2 = threading.Thread(target=run_torque_server, daemon=True)
+    t2.start()
 
     # Start FastAPI web server
     uvicorn.run(app, host="0.0.0.0", port=8000)

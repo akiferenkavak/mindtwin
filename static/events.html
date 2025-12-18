@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>System Events</title>
+
+<style>
+body {
+  background: #111;
+  color: #eee;
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  padding: 2rem;
+}
+
+nav {
+  background: #171616;
+  padding: 1rem 2.5rem;
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+nav a {
+  color: #aaa;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+nav a:hover { color: #fff; }
+
+h1 {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.badge {
+  background: red;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
+.filters {
+  display: flex;
+  gap: 1rem;
+  margin: 1rem 0;
+  flex-wrap: wrap;
+}
+
+select {
+  background: #1b1b1b;
+  color: #eee;
+  border: 1px solid #333;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+}
+
+#counter {
+  margin: 0.5rem 0 1.5rem 0;
+  color: #f87171;
+  font-weight: 500;
+}
+
+.event {
+  border-left: 5px solid #555;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+  background: #181818;
+  border-radius: 6px;
+}
+
+.event.CRITICAL { border-color: red; }
+.event.WARNING  { border-color: orange; }
+.event.INFO     { border-color: #4da6ff; }
+
+.meta {
+  font-size: 0.85rem;
+  color: #aaa;
+  margin-top: 0.3rem;
+}
+</style>
+</head>
+
+<body>
+
+<nav>
+  <a href="/">Home</a>
+  <a href="/thermal">Thermal</a>
+  <a href="/torque">Torque</a>
+  <a href="/events">Events</a>
+</nav>
+
+<h1>
+  System Events
+  <span id="criticalCount"></span>
+</h1>
+
+<div class="filters">
+  <select id="timeFilter">
+    <option value="all">All time</option>
+    <option value="5">Last 5 minutes</option>
+  </select>
+
+  <select id="typeFilter">
+    <option value="all">All events</option>
+    <option value="THERMAL">Thermal</option>
+    <option value="TORQUE">Torque</option>
+  </select>
+
+  <select id="jointFilter" disabled>
+    <option value="all">All joints</option>
+    <option value="1">Joint 1</option>
+    <option value="2">Joint 2</option>
+    <option value="3">Joint 3</option>
+    <option value="4">Joint 4</option>
+    <option value="5">Joint 5</option>
+    <option value="6">Joint 6</option>
+  </select>
+</div>
+
+<div id="counter"></div>
+<div id="events"></div>
+
+<script>
+async function fetchErrors() {
+  const res = await fetch("/errors");
+  const data = await res.json();
+
+  const eventsDiv = document.getElementById("events");
+  const counterDiv = document.getElementById("counter");
+  const criticalBadge = document.getElementById("criticalCount");
+
+  eventsDiv.innerHTML = "";
+  counterDiv.innerText = "";
+  criticalBadge.innerHTML = "";
+
+  const timeFilter  = document.getElementById("timeFilter").value;
+  const typeFilter  = document.getElementById("typeFilter").value;
+  const jointFilter = document.getElementById("jointFilter").value;
+
+  const now = Date.now();
+  let criticalCount = 0;
+  let jointEventCount = 0;
+
+  data.slice().reverse().forEach(e => {
+
+    // TYPE FILTER
+    if (typeFilter !== "all" && e.type !== typeFilter) return;
+
+    // TIME FILTER
+    if (timeFilter === "5") {
+      const t = new Date(e.timestamp).getTime();
+      if (now - t > 5 * 60 * 1000) return;
+    }
+
+    // JOINT FILTER
+    if (e.type === "TORQUE" && jointFilter !== "all") {
+      if (String(e.meta.joint) !== jointFilter) return;
+      jointEventCount++;
+    }
+
+    if (e.severity === "CRITICAL") criticalCount++;
+
+    const div = document.createElement("div");
+    div.className = `event ${e.severity}`;
+    div.innerHTML = `
+      <b>${e.type}</b> — ${e.severity}<br/>
+      ${e.message}
+      <div class="meta">
+        ${JSON.stringify(e.meta)}<br/>
+        ${e.timestamp}
+      </div>
+    `;
+    eventsDiv.appendChild(div);
+  });
+
+  // BADGES
+  if (criticalCount > 0) {
+    criticalBadge.innerHTML =
+      `<span class="badge">${criticalCount} CRITICAL</span>`;
+  }
+
+  // JOINT COUNTER
+  if (typeFilter === "TORQUE" && jointFilter !== "all") {
+    counterDiv.innerText =
+      `Joint ${jointFilter} anomaly events: ${jointEventCount}`;
+  }
+}
+
+// ENABLE / DISABLE JOINT FILTER
+document.getElementById("typeFilter").addEventListener("change", () => {
+  const joint = document.getElementById("jointFilter");
+  joint.disabled = document.getElementById("typeFilter").value !== "TORQUE";
+  fetchErrors();
+});
+
+document.getElementById("timeFilter").addEventListener("change", fetchErrors);
+document.getElementById("jointFilter").addEventListener("change", fetchErrors);
+
+setInterval(fetchErrors, 1000);
+fetchErrors();
+</script>
+
+</body>
+</html>

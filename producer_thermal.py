@@ -6,15 +6,15 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Optional, Iterator
 
-# ==== CONFIG ====
+# CONFIG
 HOST = "127.0.0.1"
 PORT = 8765
-BASE_DIR = r"thermal_capture/thermal_capture"  
+BASE_DIR = r"thermal_capture/thermal_capture"
 SUMMARY_PATH = os.path.join(BASE_DIR, "capture_summary.txt")
 IMAGE_PATTERN = "frame_{:04d}.jpg"  # frame_0001.jpg gibi
-STRICT_IMAGE_CHECK = True  # True ise dosya yoksa image_path=None
+STRICT_IMAGE_CHECK = True
 
-# ==== DATA MODEL ====
+# DATA MODEL
 @dataclass
 class FramePacket:
     image_path: Optional[str]
@@ -24,7 +24,7 @@ class FramePacket:
     t_mean: float
     frame_no: int
 
-# ==== PARSER ====
+# PARSER
 PAT_FRAME = re.compile(r"\bFrame[:\s]+(\d+)\b", re.IGNORECASE)
 PAT_DATETIME = re.compile(r"(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)")
 PAT_MIN = re.compile(r"Min[:\s]+(-?\d+(?:\.\d+)?)", re.IGNORECASE)
@@ -60,7 +60,7 @@ def parse_summary(path: str) -> list[tuple[int, datetime, float, float, float]]:
         tmean = float(m_m.group(1))
         results.append((frame_no, ts, tmin, tmax, tmean))
 
-    # Zaman sırasına göre sırala (log karışıksa)
+    # Zaman sırasına göre sırala
     results.sort(key=lambda x: x[1])
     return results
 
@@ -78,7 +78,7 @@ def packets_from_summary(rows: list[tuple[int, datetime, float, float, float]]) 
             frame_no=frame_no,
         )
 
-# ==== REAL-TIME SENDER ====
+# REAL-TIME SENDER
 def send_stream(packets: list[FramePacket]) -> None:
     if not packets:
         print("Gönderilecek paket bulunamadı.")

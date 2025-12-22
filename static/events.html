@@ -5,6 +5,7 @@
 <title>System Events</title>
 
 <style>
+
 body {
   background: #111;
   color: #eee;
@@ -13,6 +14,7 @@ body {
   padding: 2rem;
 }
 
+
 nav {
   background: #171616;
   padding: 1rem 2.5rem;
@@ -20,32 +22,61 @@ nav {
   gap: 1rem;
   margin-bottom: 2rem;
   border-radius: 12px;
+  align-items: center;
+}
+
+nav .title {
+  font-weight: 700;
+  color: #8b1d1d;
+  margin-right: auto;
 }
 
 nav a {
-  color: #aaa;
+  color: #6c2525;
   text-decoration: none;
   font-weight: 600;
   padding: 0.45rem 0.9rem;
   border-radius: 8px;
 }
 
-nav a:hover { color: #fff; background: rgba(71,132,230,0.788); }
-
-h1 {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin: 0 0 1rem 0;
+nav a:hover {
+  color: #fff;
+  background: rgba(71,132,230,0.788);
 }
 
-.badge {
-  background: red;
+
+.page {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+
+.events-header {
+  margin-bottom: 1.5rem;
+}
+
+.events-header h1 {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 0 0.75rem 0;
+}
+
+.events-header .badge {
+  background: #dc2626;
   padding: 0.25rem 0.6rem;
   border-radius: 6px;
   font-size: 0.8rem;
   font-weight: 700;
+  color: #fff;
 }
+
+#status {
+  margin-bottom: 0.75rem;
+  color: #ccc;
+  font-size: 0.9rem;
+}
+
 
 .filters {
   display: flex;
@@ -63,29 +94,33 @@ select {
 }
 
 #counter {
-  margin: 0.5rem 0 1.5rem 0;
+  margin: 0.5rem 0 1rem 0;
   color: #f87171;
   font-weight: 600;
 }
 
-#status {
-  margin-bottom: 1rem;
-  color: #ccc;
-}
 
-.event {
+.events-list .event {
   border-left: 5px solid #555;
-  padding: 0.75rem 1rem;
-  margin-bottom: 0.75rem;
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 0.9rem;
   background: #181818;
-  border-radius: 10px;
+  border-radius: 12px;
 }
 
-.event.CRITICAL { border-color: #ff3b3b; }
-.event.WARNING  { border-color: #ffa500; }
-.event.INFO     { border-color: #4da6ff; }
+.events-list .event.CRITICAL {
+  border-color: #ff3b3b;
+}
 
-.meta {
+.events-list .event.WARNING {
+  border-color: #f59e0b;
+}
+
+.events-list .event.INFO {
+  border-color: #4da6ff;
+}
+
+.events-list .meta {
   font-size: 0.9rem;
   color: #aaa;
   margin-top: 0.45rem;
@@ -104,47 +139,51 @@ select {
   <a href="/events">Events</a>
 </nav>
 
+<div class="page">
 
-<h1>
-  System Events
-  <span id="criticalCount"></span>
-</h1>
+  <header class="events-header">
+    <h1>
+      System Events
+      <span id="criticalCount"></span>
+    </h1>
 
-<div id="status">Waiting for events…</div>
+    <div id="status">Waiting for events…</div>
 
-<div class="filters">
-  <select id="timeFilter">
-    <option value="all">All time</option>
-    <option value="5">Last 5 minutes</option>
-  </select>
+    <div class="filters">
+      <select id="timeFilter">
+        <option value="all">All time</option>
+        <option value="5">Last 5 minutes</option>
+      </select>
 
-  <select id="typeFilter">
-    <option value="all">All events</option>
-    <option value="THERMAL">Thermal</option>
-    <option value="TORQUE">Torque</option>
-  </select>
+      <select id="typeFilter">
+        <option value="all">All events</option>
+        <option value="THERMAL">Thermal</option>
+        <option value="TORQUE">Torque</option>
+      </select>
 
-  <select id="jointFilter" disabled>
-    <option value="all">All joints</option>
-    <option value="1">Joint 1</option>
-    <option value="2">Joint 2</option>
-    <option value="3">Joint 3</option>
-    <option value="4">Joint 4</option>
-    <option value="5">Joint 5</option>
-    <option value="6">Joint 6</option>
-  </select>
+      <select id="jointFilter" disabled>
+        <option value="all">All joints</option>
+        <option value="1">Joint 1</option>
+        <option value="2">Joint 2</option>
+        <option value="3">Joint 3</option>
+        <option value="4">Joint 4</option>
+        <option value="5">Joint 5</option>
+        <option value="6">Joint 6</option>
+      </select>
+    </div>
+
+    <div id="counter"></div>
+  </header>
+
+  <section class="events-list">
+    <div id="events"></div>
+  </section>
+
 </div>
 
-<div id="counter"></div>
-<div id="events"></div>
-
 <script>
-const seen = new Set();
-const MAX_SHOW = 200;
-
 const eventsDiv = document.getElementById("events");
 const statusDiv = document.getElementById("status");
-const counterDiv = document.getElementById("counter");
 const criticalBadge = document.getElementById("criticalCount");
 
 function fmtTime(iso) {
@@ -162,24 +201,6 @@ function fmtMeta(type, meta = {}) {
   return JSON.stringify(meta);
 }
 
-function keyOf(e) {
-  return `${e.timestamp}|${e.type}|${e.severity}|${e.message}`;
-}
-
-function addEvent(e) {
-  const div = document.createElement("div");
-  div.className = `event ${e.severity || "INFO"}`;
-  div.innerHTML = `
-    <b>${e.type}</b> — ${e.severity}<br/>
-    ${e.message}
-    <div class="meta">
-      ${fmtMeta(e.type, e.meta)}<br/>
-      ${fmtTime(e.timestamp)}
-    </div>
-  `;
-  eventsDiv.prepend(div);
-}
-
 async function poll() {
   try {
     const res = await fetch("/errors", { cache: "no-store" });
@@ -189,29 +210,23 @@ async function poll() {
     statusDiv.textContent = `Updated: ${new Date().toLocaleTimeString()}`;
     statusDiv.style.color = "#ccc";
 
-    // Filtreler
     const timeFilter  = document.getElementById("timeFilter").value;
     const typeFilter  = document.getElementById("typeFilter").value;
     const jointFilter = document.getElementById("jointFilter").value;
 
     const now = Date.now();
 
-    // HTML'i tek string olarak oluştur (flicker minimum)
     let html = "";
     let criticalCount = 0;
 
-    // En yeniler üstte görünsün diye reverse
     data.slice().reverse().forEach(e => {
-      // TYPE
       if (typeFilter !== "all" && e.type !== typeFilter) return;
 
-      // TIME
       if (timeFilter === "5") {
         const t = new Date(e.timestamp).getTime();
         if (now - t > 5 * 60 * 1000) return;
       }
 
-      // JOINT
       if (e.type === "TORQUE" && jointFilter !== "all") {
         if (String(e.meta?.joint) !== jointFilter) return;
       }
@@ -220,17 +235,16 @@ async function poll() {
 
       html += `
         <div class="event ${e.severity || "INFO"}">
-          <b>${e.type || "EVENT"}</b> — ${e.severity || "INFO"}<br/>
-          ${e.message || ""}
+          <b>${e.type}</b> — ${e.severity}<br/>
+          ${e.message}
           <div class="meta">
-            ${fmtMeta(e.type, e.meta || {})}<br/>
+            ${fmtMeta(e.type, e.meta)}<br/>
             ${fmtTime(e.timestamp)}
           </div>
         </div>
       `;
     });
 
-    // Tek seferde bas
     eventsDiv.innerHTML = html || `<div class="meta">No events yet.</div>`;
 
     criticalBadge.innerHTML =
@@ -241,9 +255,6 @@ async function poll() {
     statusDiv.style.color = "#f87171";
   }
 }
-
-
-
 
 document.getElementById("typeFilter").addEventListener("change", () => {
   document.getElementById("jointFilter").disabled =

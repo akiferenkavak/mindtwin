@@ -1,114 +1,113 @@
-# producer.py
-# Thermal camera capture_summary.txt dosyasını okuyup
-# FramePacket JSON satırlarını TCP soketi üzerinden gönderir.
-import os, re, json, time, socket
-from dataclasses import asdict, dataclass
-from datetime import datetime
-from typing import Optional, Iterator
+# producer_thermal_csv.py
+# CSV'deki MOT_TEMP_A1..A6 kolonlarından
+# thermal (min / mean / max) üretip consumer'a gönderir
 
-# CONFIG
+import csv
+import json
+import time
+import socket
+from datetime import datetime
+from dataclasses import dataclass, asdict
+from tkinter import Tk
+from tkinter.filedialog import askopenfilename
+
 HOST = "127.0.0.1"
 PORT = 8765
-BASE_DIR = r"thermal_capture/thermal_capture"
-SUMMARY_PATH = os.path.join(BASE_DIR, "capture_summary.txt")
-IMAGE_PATTERN = "frame_{:04d}.jpg"  # frame_0001.jpg gibi
-STRICT_IMAGE_CHECK = True
+SEND_INTERVAL = 0.5  # saniye
 
-# DATA MODEL
+JOINT_TEMP_KEYS = [
+    "mot_temp_a1",
+    "mot_temp_a2",
+    "mot_temp_a3",
+    "mot_temp_a4",
+    "mot_temp_a5",
+    "mot_temp_a6",
+]
+
 @dataclass
 class FramePacket:
-    image_path: Optional[str]
-    timestamp: str         # ISO 8601 (e.g., "2025-11-10T13:16:25.141000")
+    image_path: str | None
+    timestamp: str
     t_min: float
     t_max: float
     t_mean: float
     frame_no: int
 
-# PARSER
-PAT_FRAME = re.compile(r"\bFrame[:\s]+(\d+)\b", re.IGNORECASE)
-PAT_DATETIME = re.compile(r"(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)")
-PAT_MIN = re.compile(r"Min[:\s]+(-?\d+(?:\.\d+)?)", re.IGNORECASE)
-PAT_MAX = re.compile(r"Max[:\s]+(-?\d+(?:\.\d+)?)", re.IGNORECASE)
-PAT_MEAN = re.compile(r"Mean[:\s]+(-?\d+(?:\.\d+)?)", re.IGNORECASE)
+def pick_csv():
+    root = Tk()
+    root.withdraw()
+    path = askopenfilename(
+        title="Google Drive içinden motor sıcaklık CSV seç",
+        filetypes=[("CSV files", "*.csv")]
+    )
+    if not path:
+        raise SystemExit("CSV seçilmedi.")
+    return path
 
-def parse_summary(path: str) -> list[tuple[int, datetime, float, float, float]]:
-    """capture_summary.txt içinden (frame_no, ts, min, max, mean) listesi döndürür"""
-    results = []
-    with open(path, "r", encoding="utf-8", errors="ignore") as f:
-        text = f.read()
+def to_float(x):
+    try:
+        return float(x)
+    except:
+        return None
 
-    # Her 'Frame:' blokunu kaba şekilde böl
-    blocks = re.split(r"(?=Frame[:\s]+\d+)", text)
-    for b in blocks:
-        if not b.strip():
-            continue
-        m_f = PAT_FRAME.search(b)
-        m_t = PAT_DATETIME.search(b)
-        m_n = PAT_MIN.search(b)
-        m_x = PAT_MAX.search(b)
-        m_m = PAT_MEAN.search(b)
-        if not (m_f and m_t and m_n and m_x and m_m):
-            # eksik alan varsa bu bloğu atla
-            continue
-        frame_no = int(m_f.group(1))
-        # "YYYY-MM-DD 13:16:25.141" formatını oku
-        ts_str = f"{m_t.group(1)} {m_t.group(2)}"
-        ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S.%f") if "." in ts_str \
-             else datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-        tmin = float(m_n.group(1))
-        tmax = float(m_x.group(1))
-        tmean = float(m_m.group(1))
-        results.append((frame_no, ts, tmin, tmax, tmean))
+def main():
+    csv_path = pick_csv()
+    print("[thermal] Selected CSV:", csv_path)
 
-    # Zaman sırasına göre sırala
-    results.sort(key=lambda x: x[1])
-    return results
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        first = f.readline()
+        f.seek(0)
+        delimiter = ";" if ";" in first else ","
+        reader = csv.DictReader(f, delimiter=delimiter)
+        rows = list(reader)
 
-def packets_from_summary(rows: list[tuple[int, datetime, float, float, float]]) -> Iterator[FramePacket]:
-    for frame_no, ts, tmin, tmax, tmean in rows:
-        img_path = os.path.join(BASE_DIR, IMAGE_PATTERN.format(frame_no))
-        if STRICT_IMAGE_CHECK and not os.path.isfile(img_path):
-            img_path = None
-        yield FramePacket(
-            image_path=img_path,
-            timestamp=ts.isoformat(),
-            t_min=tmin,
-            t_max=tmax,
-            t_mean=tmean,
-            frame_no=frame_no,
+    # Header normalize
+    headers = {h.lower(): h for h in rows[0].keys() if h}
+
+    temp_cols = []
+    for k in JOINT_TEMP_KEYS:
+        if k in headers:
+            temp_cols.append(headers[k])
+
+    if len(temp_cols) < 2:
+        raise RuntimeError(
+            f"MOT_TEMP kolonları bulunamadı.\nBulunanlar: {list(headers.keys())}"
         )
 
-# REAL-TIME SENDER
-def send_stream(packets: list[FramePacket]) -> None:
-    if not packets:
-        print("Gönderilecek paket bulunamadı.")
-        return
+    print("[thermal] Using temp columns:", temp_cols)
 
-    # TCP bağlantısı
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect((HOST, PORT))
-    print(f"[producer] bağlı: {HOST}:{PORT} | {len(packets)} paket gönderilecek")
+    print("[thermal] connected to consumer")
 
-    # 1x gerçek zamanlı: ardışık zaman farkına göre bekle
-    prev_dt = datetime.fromisoformat(packets[0].timestamp)
-    for i, p in enumerate(packets):
-        cur_dt = datetime.fromisoformat(p.timestamp)
-        wait = (cur_dt - prev_dt).total_seconds()
-        if wait < 0:
-            wait = 0.0
-        if i > 0:
-            time.sleep(wait)  # 1× hız
+    frame = 0
+    for r in rows:
+        temps = []
+        for col in temp_cols:
+            v = to_float(r.get(col))
+            if v is not None:
+                temps.append(v)
 
-        line = json.dumps(asdict(p), ensure_ascii=False) + "\n"
-        sock.sendall(line.encode("utf-8"))
-        prev_dt = cur_dt
-        print(f"[producer] sent frame={p.frame_no} t={p.timestamp} wait={wait:.3f}s")
+        if not temps:
+            continue
 
-    sock.shutdown(socket.SHUT_WR)
+        pkt = FramePacket(
+            image_path=None,
+            timestamp=datetime.now().isoformat(),
+            t_min=min(temps),
+            t_max=max(temps),
+            t_mean=sum(temps) / len(temps),
+            frame_no=frame
+        )
+
+        sock.sendall((json.dumps(asdict(pkt)) + "\n").encode())
+        print(f"[thermal] sent frame {frame}")
+
+        frame += 1
+        time.sleep(SEND_INTERVAL)
+
     sock.close()
-    print("[producer] bitti.")
+    print("[thermal] done")
 
 if __name__ == "__main__":
-    rows = parse_summary(SUMMARY_PATH)
-    pkts = list(packets_from_summary(rows))
-    send_stream(pkts)
+    main()

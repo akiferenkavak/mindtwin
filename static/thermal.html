@@ -2,208 +2,172 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Thermal Anomaly Monitor</title>
+  <title>Thermal Monitor</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
 
+  <style>
     html, body {
-        background: #111 !important;
-        color: #eee !important;
-        margin: 0;
-        padding: 2rem;
-        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: #111 !important;
+      color: #eee !important;
+      margin: 0;
+      padding: 2rem;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
     }
 
     nav {
-    background: #171616;
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-    padding: 1rem 2.5rem;
+      background: #171616;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      padding: 1rem 2.5rem;
+      border-radius: 12px;
     }
 
     nav .title {
-    margin-right: auto;
-    font-weight: 600;
-    font-size: 1.1rem;
-    color: #911212;
+      margin-right: auto;
+      font-weight: 600;
+      font-size: 1.1rem;
+      color: #911212;
     }
 
     nav a {
-    color: #945151;
-    text-decoration: none;
-    font-weight: 500;
-    padding: 0.45rem 0.9rem;
-    border-radius: 8px;
-    transition: background 0.2s ease, color 0.2s ease;
+      color: #945151;
+      text-decoration: none;
+      font-weight: 600;
+      padding: 0.45rem 0.9rem;
+      border-radius: 8px;
+      transition: background 0.2s ease, color 0.2s ease;
     }
 
     nav a:hover {
-    background: rgba(255,255,255,0.08);
-    color: #fff;
+      background: rgba(71, 132, 230, 0.788);
+      color: #fff;
     }
-    </style>
 
-
+    #status {
+      margin-top: 1rem;
+      font-size: 1.05rem;
+      letter-spacing: 0.2px;
+      padding: 0.75rem 1rem;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.08);
+      display: inline-block;
+      min-width: 420px;
+    }
+  </style>
 </head>
 
 <body>
+  <nav>
+    <div class="title">MindTwin</div>
+    <a href="/">Home</a>
+    <a href="/thermal">Thermal</a>
+    <a href="/torque">Torque</a>
+    <a href="/events">Events</a>
+  </nav>
 
-<nav>
-  <div class="title">MindTwin</div>
-  <a href="/">Home</a>
-  <a href="/thermal">Thermal</a>
-  <a href="/torque">Torque</a>
-  <a href="/events">Events</a>
-</nav>
+  <h1>Thermal Monitor</h1>
+
+  <canvas id="chart" width="700" height="350"></canvas>
+  <div id="status">Starting…</div>
+
+  <script>
+    const SLIDE_WINDOW = 30;
 
 
-<h1>Thermal Anomaly Monitor</h1>
-<div id="info">Connecting...</div>
-<div id="thermo"><div id="bar"></div></div>
-<canvas id="chart" width="600" height="300"></canvas>
+    const THERMAL_THRESHOLD = 305;
 
-<h2>Anomalies</h2>
-<div id="alerts" style="max-height: 200px; overflow-y: auto;"></div>
+    const ctx = document.getElementById("chart").getContext("2d");
+    const statusDiv = document.getElementById("status");
 
-<script>
-const info = document.getElementById("info");
-const bar = document.getElementById("bar");
-const alerts = document.getElementById("alerts");
-const ctx = document.getElementById("chart").getContext("2d");
+    const COLORS = {
+      min:   "#4da6ff",
+      mean:  "#22c55e",
+      max:   "#ef4444",
+      thr:   "red"
+    };
 
-const chart = new Chart(ctx, {
-  type: 'line',
-  data: {
-    datasets: [{
-      label: 'Max °C',
-      data: [],
-      spanGaps: false,
-      parsing: false,
-      borderColor: 'white',
-      backgroundColor: 'rgba(255,255,255,0.05)',
-      tension: 0.2,
-      pointRadius: 5,
-      pointBackgroundColor: []
-    }]
-  },
-  options: {
-    animation: false,
-    responsive: true,
-    scales: {
-      x: {
-        type: 'linear',
-        title: { display: true, text: 'Frame #' }
-      },
-      y: {
-        title: { display: true, text: 'Temperature (°C)' },
-        suggestedMin: 0,
-        suggestedMax: 100
+    const datasets = [
+      { label: "T_min",  data: [], borderColor: COLORS.min,  backgroundColor: COLORS.min,  pointBackgroundColor: COLORS.min,  pointRadius: 3, borderWidth: 2, tension: 0.2 },
+      { label: "T_mean", data: [], borderColor: COLORS.mean, backgroundColor: COLORS.mean, pointBackgroundColor: COLORS.mean, pointRadius: 3, borderWidth: 2, tension: 0.2 },
+      { label: "T_max",  data: [], borderColor: COLORS.max,  backgroundColor: COLORS.max,  pointBackgroundColor: COLORS.max,  pointRadius: 3, borderWidth: 2, tension: 0.2 },
+      { label: "Threshold", data: [], borderDash: [6,6], borderColor: COLORS.thr, borderWidth: 2, pointRadius: 0 }
+    ];
+
+    const chart = new Chart(ctx, {
+      type: "line",
+      data: { datasets },
+      options: {
+        animation: false,
+        scales: {
+          x: { type: "linear", title: { display: true, text: "Frame #" } },
+          y: { title: { display: true, text: "Temperature" } }
+        },
+        plugins: {
+          legend: { labels: { color: "#ccc" } }
+        }
       }
-    },
-    plugins: {
-      legend: { labels: { color: '#ccc' } }
-    }
-  }
-});
-
-async function loadHistory() {
-  const res = await fetch("/frames/history");
-  const data = await res.json();
-
-  const dataset = chart.data.datasets[0];
-
-  data.forEach(frame => {
-    const temp = frame.t_max;
-
-    const color =
-      temp < 22 ? "blue" :
-      temp < 28 ? "green" :
-      temp < 30 ? "yellow" :
-      temp < 31 ? "orange" : "red";
-
-    dataset.data.push({
-      x: frame.frame_no,
-      y: temp
     });
 
-    dataset.pointBackgroundColor.push(color);
-  });
+    
+    const wsProto = (location.protocol === "https:") ? "wss" : "ws";
+    const ws = new WebSocket(`${wsProto}://${location.host}/ws`);
 
-  if (data.length > 0) {
-    const last = data[data.length - 1].frame_no;
-    chart.options.scales.x.max = last;
-    chart.options.scales.x.min = Math.max(last - SLIDE_WINDOW + 1, 0);
-    chart.update("none");
-  }
-}
+    ws.onopen = () => {
+      statusDiv.innerText = "Connected. Waiting for incoming thermal data…";
+      statusDiv.style.color = "#ddd";
+    };
 
+    ws.onerror = () => {
+      statusDiv.innerText = "WebSocket error. Check that backend is running.";
+      statusDiv.style.color = "red";
+    };
 
-loadHistory();
+    ws.onclose = () => {
+      statusDiv.innerText = "Disconnected. Backend not running / closed.";
+      statusDiv.style.color = "red";
+    };
 
+    ws.onmessage = (event) => {
+      const pkt = JSON.parse(event.data);
 
+      const frame = pkt.frame_no ?? "-";
+      const ts = pkt.timestamp
+        ? pkt.timestamp.replace("T"," ").split(".")[0]
+        : new Date().toLocaleTimeString();
 
-const ws = new WebSocket("ws://localhost:8000/ws");
+      const tmin = Number(pkt.t_min);
+      const tmean = Number(pkt.t_mean);
+      const tmax = Number(pkt.t_max);
 
-const SLIDE_WINDOW = 100;
+      if (Number.isFinite(tmin) && Number.isFinite(tmean) && Number.isFinite(tmax)) {
+        datasets[0].data.push({ x: frame, y: tmin });
+        datasets[1].data.push({ x: frame, y: tmean });
+        datasets[2].data.push({ x: frame, y: tmax });
+        datasets[3].data.push({ x: frame, y: THERMAL_THRESHOLD });
 
-ws.onmessage = (event) => {
-  const frame = JSON.parse(event.data);
-  const temp = frame.t_max;
+        for (const ds of datasets) {
+          if (ds.data.length > SLIDE_WINDOW) ds.data.shift();
+        }
 
-  const color =
-    temp < 22 ? "blue" :
-    temp < 28 ? "green" :
-    temp < 30 ? "yellow" :
-    temp < 31 ? "orange" : "red";
+        chart.options.scales.x.min = Math.max(frame - SLIDE_WINDOW + 1, 0);
+        chart.options.scales.x.max = frame;
+        chart.update("none");
 
-  bar.style.background = color;
-  bar.style.width = Math.min(temp, 100) + "%";
+        const isAnomaly = (tmax >= THERMAL_THRESHOLD) || !!pkt.anomaly;
 
-  info.innerText = `Frame #${frame.frame_no} | Max: ${temp.toFixed(2)} °C`;
+        statusDiv.innerText = isAnomaly
+          ? `⚠️ Thermal anomaly detected | Tmax=${tmax.toFixed(2)} (thr=${THERMAL_THRESHOLD}) | Frame ${frame} | ${ts}`
+          : `Normal | Tmin=${tmin.toFixed(2)} Mean=${tmean.toFixed(2)} Tmax=${tmax.toFixed(2)} (thr=${THERMAL_THRESHOLD}) | Frame ${frame} | ${ts}`;
 
-  const dataset = chart.data.datasets[0];
-
-  // push point
-  dataset.data.push({ x: frame.frame_no, y: temp });
-  dataset.pointBackgroundColor.push(color);
-
-  // trim buffer
-  if (dataset.data.length > SLIDE_WINDOW) {
-    dataset.data.shift();
-    dataset.pointBackgroundColor.shift();
-  }
-
-  // Follow the latest frame
-  chart.options.scales.x.max = frame.frame_no;
-  chart.options.scales.x.min = Math.max(
-    frame.frame_no - SLIDE_WINDOW + 1,
-    0
-  );
-
-  chart.update('none');
-
-  if (temp >= 30) {
-    const p = document.createElement("p");
-    p.innerText = `⚠️ ${frame.timestamp} | ${temp.toFixed(2)}°C HIGH`;
-    p.style.color = "red";
-    alerts.appendChild(p);
-    alerts.scrollTop = alerts.scrollHeight;
-  }
-};
-
-window.addEventListener("beforeunload", () => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.close();
-  }
-});
-
-
-ws.onclose = () => {
-  info.innerText = "Connection closed";
-};
-</script>
-
+        statusDiv.style.color = isAnomaly ? "red" : "lightgreen";
+      } else {
+        statusDiv.innerText = `Data received | Frame ${frame} | ${ts}`;
+        statusDiv.style.color = "#ddd";
+      }
+    };
+  </script>
 </body>
 </html>

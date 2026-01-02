@@ -5,7 +5,6 @@
 <title>System Events</title>
 
 <style>
-
 body {
   background: #111;
   color: #eee;
@@ -13,7 +12,6 @@ body {
   margin: 0;
   padding: 2rem;
 }
-
 
 nav {
   background: #171616;
@@ -44,12 +42,10 @@ nav a:hover {
   background: rgba(71,132,230,0.788);
 }
 
-
 .page {
   max-width: 1100px;
   margin: 0 auto;
 }
-
 
 .events-header {
   margin-bottom: 1.5rem;
@@ -77,7 +73,6 @@ nav a:hover {
   font-size: 0.9rem;
 }
 
-
 .filters {
   display: flex;
   gap: 1rem;
@@ -99,7 +94,6 @@ select {
   font-weight: 600;
 }
 
-
 .events-list .event {
   border-left: 5px solid #555;
   padding: 0.9rem 1.1rem;
@@ -108,17 +102,9 @@ select {
   border-radius: 12px;
 }
 
-.events-list .event.CRITICAL {
-  border-color: #ff3b3b;
-}
-
-.events-list .event.WARNING {
-  border-color: #f59e0b;
-}
-
-.events-list .event.INFO {
-  border-color: #4da6ff;
-}
+.events-list .event.CRITICAL { border-color: #ff3b3b; }
+.events-list .event.WARNING  { border-color: #f59e0b; }
+.events-list .event.INFO     { border-color: #4da6ff; }
 
 .events-list .meta {
   font-size: 0.9rem;
@@ -140,7 +126,6 @@ select {
 </nav>
 
 <div class="page">
-
   <header class="events-header">
     <h1>
       System Events
@@ -178,13 +163,18 @@ select {
   <section class="events-list">
     <div id="events"></div>
   </section>
-
 </div>
 
 <script>
 const eventsDiv = document.getElementById("events");
 const statusDiv = document.getElementById("status");
 const criticalBadge = document.getElementById("criticalCount");
+
+// Kelvin -> Celsius
+const KELVIN_OFFSET = 273.15;
+function toCelsius(v) {
+  return (typeof v === "number" && v > 120) ? (v - KELVIN_OFFSET) : v;
+}
 
 function fmtTime(iso) {
   return iso ? iso.replace("T"," ").split(".")[0] : "";
@@ -198,6 +188,14 @@ function fmtMeta(type, meta = {}) {
   if (type === "TORQUE") {
     return `Joint ${meta.joint} | Δ=${num2(meta.diff)} (thr=${meta.threshold}) | Frame ${meta.frame_no}`;
   }
+
+  // THERMAL (Celsius göster)
+  if (type === "THERMAL") {
+    const tmaxC = toCelsius(meta.t_max);
+    const thrC  = toCelsius(meta.threshold);
+    return `Tmax=${num2(tmaxC)}°C (thr=${num2(thrC)}°C) | Frame ${meta.frame_no}`;
+  }
+
   return JSON.stringify(meta);
 }
 

@@ -56,6 +56,24 @@
       display: inline-block;
       min-width: 420px;
     }
+
+    .controls {
+      margin-top: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .controls label { font-weight: 700; }
+    .controls input {
+      width: 90px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.06);
+      color: #eee;
+      outline: none;
+    }
+    .hint { opacity: 0.75; font-size: 13px; }
   </style>
 </head>
 
@@ -71,13 +89,56 @@
   <h1>Thermal Monitor</h1>
 
   <canvas id="chart" width="700" height="350"></canvas>
+
+  <div class="controls">
+    <label for="thrInput">Threshold (°C)</label>
+    <input id="thrInput" type="number" value="30" step="0.5" />
+    <div class="hint">Threshold değişince backend’e kaydedilir (kalıcı).</div>
+  </div>
+
   <div id="status">Starting…</div>
 
   <script>
     const SLIDE_WINDOW = 30;
 
+    const KELVIN_OFFSET = 273.15;
+    function toCelsius(v) {
+      if (typeof v !== "number" || !isFinite(v)) return NaN;
+      return (v > 120) ? (v - KELVIN_OFFSET) : v;
+    }
 
-    const THERMAL_THRESHOLD = 305;
+    const thrInput = document.getElementById("thrInput");
+    function getThresholdC() {
+      const x = Number(thrInput.value);
+      return isFinite(x) ? x : 30;
+    }
+
+    async function loadThresholdFromBackend() {
+      try {
+        const r = await fetch("/settings/thermal", { cache: "no-store" });
+        const j = await r.json();
+        if (j && typeof j.thermal_threshold_c === "number") {
+          thrInput.value = j.thermal_threshold_c;
+        }
+      } catch (e) {}
+    }
+
+    let saveTimer = null;
+    function saveThresholdToBackendDebounced() {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(async () => {
+        const val = getThresholdC();
+        try {
+          await fetch("/settings/thermal", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ thermal_threshold_c: val })
+          });
+        } catch (e) {}
+      }, 250);
+    }
+
+    thrInput.addEventListener("input", saveThresholdToBackendDebounced);
 
     const ctx = document.getElementById("chart").getContext("2d");
     const statusDiv = document.getElementById("status");
@@ -90,10 +151,10 @@
     };
 
     const datasets = [
-      { label: "T_min",  data: [], borderColor: COLORS.min,  backgroundColor: COLORS.min,  pointBackgroundColor: COLORS.min,  pointRadius: 3, borderWidth: 2, tension: 0.2 },
-      { label: "T_mean", data: [], borderColor: COLORS.mean, backgroundColor: COLORS.mean, pointBackgroundColor: COLORS.mean, pointRadius: 3, borderWidth: 2, tension: 0.2 },
-      { label: "T_max",  data: [], borderColor: COLORS.max,  backgroundColor: COLORS.max,  pointBackgroundColor: COLORS.max,  pointRadius: 3, borderWidth: 2, tension: 0.2 },
-      { label: "Threshold", data: [], borderDash: [6,6], borderColor: COLORS.thr, borderWidth: 2, pointRadius: 0 }
+      { label: "T_min (°C)",  data: [], borderColor: COLORS.min,  backgroundColor: COLORS.min,  pointBackgroundColor: COLORS.min,  pointRadius: 3, borderWidth: 2, tension: 0.2 },
+      { label: "T_mean (°C)", data: [], borderColor: COLORS.mean, backgroundColor: COLORS.mean, pointBackgroundColor: COLORS.mean, pointRadius: 3, borderWidth: 2, tension: 0.2 },
+      { label: "T_max (°C)",  data: [], borderColor: COLORS.max,  backgroundColor: COLORS.max,  pointBackgroundColor: COLORS.max,  pointRadius: 3, borderWidth: 2, tension: 0.2 },
+      { label: "Threshold (°C)", data: [], borderDash: [6,6], borderColor: COLORS.thr, borderWidth: 2, pointRadius: 0 }
     ];
 
     const chart = new Chart(ctx, {
@@ -103,15 +164,12 @@
         animation: false,
         scales: {
           x: { type: "linear", title: { display: true, text: "Frame #" } },
-          y: { title: { display: true, text: "Temperature" } }
+          y: { title: { display: true, text: "Temperature (°C)" } }
         },
-        plugins: {
-          legend: { labels: { color: "#ccc" } }
-        }
+        plugins: { legend: { labels: { color: "#ccc" } } }
       }
     });
 
-    
     const wsProto = (location.protocol === "https:") ? "wss" : "ws";
     const ws = new WebSocket(`${wsProto}://${location.host}/ws`);
 
@@ -138,15 +196,17 @@
         ? pkt.timestamp.replace("T"," ").split(".")[0]
         : new Date().toLocaleTimeString();
 
-      const tmin = Number(pkt.t_min);
-      const tmean = Number(pkt.t_mean);
-      const tmax = Number(pkt.t_max);
+      const tmin = toCelsius(Number(pkt.t_min));
+      const tmean = toCelsius(Number(pkt.t_mean));
+      const tmax = toCelsius(Number(pkt.t_max));
+
+      const thrC = getThresholdC();
 
       if (Number.isFinite(tmin) && Number.isFinite(tmean) && Number.isFinite(tmax)) {
         datasets[0].data.push({ x: frame, y: tmin });
         datasets[1].data.push({ x: frame, y: tmean });
         datasets[2].data.push({ x: frame, y: tmax });
-        datasets[3].data.push({ x: frame, y: THERMAL_THRESHOLD });
+        datasets[3].data.push({ x: frame, y: thrC });
 
         for (const ds of datasets) {
           if (ds.data.length > SLIDE_WINDOW) ds.data.shift();
@@ -156,11 +216,11 @@
         chart.options.scales.x.max = frame;
         chart.update("none");
 
-        const isAnomaly = (tmax >= THERMAL_THRESHOLD) || !!pkt.anomaly;
+        const isAnomaly = (tmax >= thrC);
 
         statusDiv.innerText = isAnomaly
-          ? `⚠️ Thermal anomaly detected | Tmax=${tmax.toFixed(2)} (thr=${THERMAL_THRESHOLD}) | Frame ${frame} | ${ts}`
-          : `Normal | Tmin=${tmin.toFixed(2)} Mean=${tmean.toFixed(2)} Tmax=${tmax.toFixed(2)} (thr=${THERMAL_THRESHOLD}) | Frame ${frame} | ${ts}`;
+          ? `⚠️ Thermal anomaly | Tmax=${tmax.toFixed(2)}°C (thr=${thrC}) | Frame ${frame} | ${ts}`
+          : `Normal | Tmin=${tmin.toFixed(2)}°C Mean=${tmean.toFixed(2)}°C Tmax=${tmax.toFixed(2)}°C (thr=${thrC}) | Frame ${frame} | ${ts}`;
 
         statusDiv.style.color = isAnomaly ? "red" : "lightgreen";
       } else {
@@ -168,6 +228,9 @@
         statusDiv.style.color = "#ddd";
       }
     };
+
+    // sayfa açılınca backend'deki kaydedilmiş threshold'u çek
+    loadThresholdFromBackend();
   </script>
 </body>
 </html>

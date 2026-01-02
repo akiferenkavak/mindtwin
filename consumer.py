@@ -1,4 +1,4 @@
-# consumer.py  (canlı yazdırmalı sürüm)
+# consumer.py  (thermal threshold: UI'dan ayarlanır + kalıcı)
 # Thermal producer (TCP:8765) + Torque producer (TCP:8766) dinler
 # FastAPI ile UI'ya websocket yayınlar:
 #   Thermal WS: /ws
@@ -16,7 +16,8 @@ from typing import Optional
 
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 import uvicorn
 
 
@@ -26,28 +27,77 @@ PORT_THERMAL_TCP = 8765
 PORT_TORQUE_TCP = 8766
 
 EVENTS_LOG_FILE = "events.log"
+SETTINGS_FILE = "settings.json"
 
 ERROR_COOLDOWN = 5.0  # saniye
 FRAME_HISTORY_SIZE = 200
 
-# Torque threshold (UI ile uyumlu tut)
+# ---------------------------
+# TORQUE (DOKUNMADIM)
+# ---------------------------
 TORQUE_THRESHOLD = 0.47
 
-# Thermal thresholds: UI bozulmasın diye frame'leri DÖNÜŞTÜRMÜYORUZ.
-# Sadece anomaly/event eşiğini doğru birime göre hesaplıyoruz.
-THERMAL_THRESHOLD_C = 30.0
-THERMAL_WARNING_C = 30.0
-THERMAL_CRITICAL_C = 33.0
+# ---------------------------
+# THERMAL (kalıcı ayar)
+# ---------------------------
 KELVIN_OFFSET = 273.15
 
+DEFAULT_SETTINGS = {
+    "thermal_threshold_c": 30.0,  # °C (UI'daki input ile değişecek)
+    "thermal_warning_c": 30.0,
+    "thermal_critical_c": 33.0,
+}
 
+_settings_lock = threading.Lock()
+settings = DEFAULT_SETTINGS.copy()
+
+
+def load_settings() -> None:
+    global settings
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                merged = DEFAULT_SETTINGS.copy()
+                merged.update({k: float(v) for k, v in data.items() if k in DEFAULT_SETTINGS})
+                settings = merged
+        except Exception:
+            # bozuksa defaultla devam
+            settings = DEFAULT_SETTINGS.copy()
+    else:
+        settings = DEFAULT_SETTINGS.copy()
+        save_settings()  # ilk kez oluştur
+
+
+def save_settings() -> None:
+    with _settings_lock:
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+
+
+def is_kelvin_value(t: float) -> bool:
+    # KUKA loglarında 295-310 gibi değerler Kelvin olur.
+    return t is not None and t > 120.0
+
+
+def thr_in_same_unit(sample_t: float, thr_c: float) -> float:
+    # sample Kelvin ise threshold'u Kelvin'e çevir
+    return (thr_c + KELVIN_OFFSET) if is_kelvin_value(sample_t) else thr_c
+
+
+# ---------------------------
+# GLOBAL STATE
+# ---------------------------
 latest_frame = None          # thermal latest packet
 latest_torque = None         # torque latest packet
-
 frame_history = deque(maxlen=FRAME_HISTORY_SIZE)
 
 error_log = []
 last_error_time = {}
+
+# Load persisted settings + old events
+load_settings()
 
 if os.path.exists(EVENTS_LOG_FILE):
     with open(EVENTS_LOG_FILE, "r", encoding="utf-8", errors="ignore") as f:
@@ -58,23 +108,9 @@ if os.path.exists(EVENTS_LOG_FILE):
                 pass
 
 
-def is_kelvin_value(t: float) -> bool:
-    # KUKA loglarında 295-310 gibi değerler Kelvin olur.
-    # Celsius için tipik değerler 0-100 bandında.
-    return t is not None and t > 120.0
-
-
-def thr_in_same_unit(sample_t: float, thr_c: float) -> float:
-    # sample Kelvin ise threshold'u Kelvin'e çevir
-    return (thr_c + KELVIN_OFFSET) if is_kelvin_value(sample_t) else thr_c
-
-
-def interpret_temp(t_max_raw: float) -> str:
-    thr_raw = thr_in_same_unit(t_max_raw, THERMAL_THRESHOLD_C)
-    return "HIGH TEMPERATURE ALERT!" if t_max_raw >= thr_raw else "Temperature Normal."
-
-
-
+# ---------------------------
+# THERMAL TCP CONSUMER
+# ---------------------------
 class Sink:
     def __init__(self) -> None:
         self.timestamps: list[str] = []
@@ -118,29 +154,32 @@ def handle_thermal_client(conn: socket.socket, sink: Sink) -> None:
                     frame_history.append(obj)
 
                     i = len(sink.mins) - 1
+                    t_max = sink.maxs[i]
 
-                    # CANLI LOG
+                    # live log
+                    with _settings_lock:
+                        thr_c = float(settings["thermal_threshold_c"])
+                        warn_c = float(settings["thermal_warning_c"])
+                        crit_c = float(settings["thermal_critical_c"])
+
+                    thr_raw = thr_in_same_unit(t_max, thr_c)
+                    warn_raw = thr_in_same_unit(t_max, warn_c)
+                    crit_raw = thr_in_same_unit(t_max, crit_c)
+
+                    # console info (raw + celsius)
+                    t_max_c = (t_max - KELVIN_OFFSET) if is_kelvin_value(t_max) else t_max
                     print(
-                        f"[live] #{sink.frame_nos[i]:04d} | "
-                        f"ts={sink.timestamps[i]} | "
-                        f"min={sink.mins[i]:.2f}°C max={sink.maxs[i]:.2f}°C mean={sink.means[i]:.2f}°C | "
-                        f"path={'None' if sink.image_paths[i] is None else sink.image_paths[i]}"
+                        f"[live] #{sink.frame_nos[i]:04d} | ts={sink.timestamps[i]} | "
+                        f"t_max_raw={t_max:.2f} | t_max_c={t_max_c:.2f}°C | "
+                        f"thr_c={thr_c:.2f}°C"
                     )
 
-                    # THERMAL EVENT DETECTION (AUTO UNIT)
-                    t_max = sink.maxs[i]
-                    comment = interpret_temp(t_max)
-
-                    thr_raw = thr_in_same_unit(t_max, THERMAL_THRESHOLD_C)
-                    warn_raw = thr_in_same_unit(t_max, THERMAL_WARNING_C)
-                    crit_raw = thr_in_same_unit(t_max, THERMAL_CRITICAL_C)
-
+                    # EVENT DETECTION
                     if t_max >= thr_raw:
                         key = ("THERMAL", sink.frame_nos[i])
                         now = time.time()
 
                         if key not in last_error_time or now - last_error_time[key] > ERROR_COOLDOWN:
-                            # SEVERITY
                             if t_max > crit_raw:
                                 severity = "CRITICAL"
                             elif t_max > warn_raw:
@@ -154,8 +193,10 @@ def handle_thermal_client(conn: socket.socket, sink: Sink) -> None:
                                 "severity": severity,
                                 "message": "High temperature detected",
                                 "meta": {
-                                    "t_max": t_max,
-                                    "threshold": thr_raw,
+                                    "t_max": t_max,             # raw
+                                    "t_max_c": t_max_c,         # celsius (events.html düzgün gösterecek)
+                                    "threshold": thr_raw,       # raw threshold (unit matched)
+                                    "threshold_c": thr_c,       # celsius threshold (UI için)
                                     "frame_no": sink.frame_nos[i],
                                 },
                             }
@@ -166,11 +207,10 @@ def handle_thermal_client(conn: socket.socket, sink: Sink) -> None:
                             with open(EVENTS_LOG_FILE, "a", encoding="utf-8") as f:
                                 f.write(json.dumps(event) + "\n")
 
-                    print(f"                        ↳ {comment}")
                     sys.stdout.flush()
 
                 except Exception as e:
-                    print("[consumer] parse error:", e)
+                    print("[consumer] thermal parse error:", e)
                     sys.stdout.flush()
 
 
@@ -184,37 +224,24 @@ def run_thermal_server() -> None:
     print(f"[consumer] listening on {HOST}:{PORT_THERMAL_TCP} ...")
     sys.stdout.flush()
 
-    try:
+    while True:
         conn, addr = srv.accept()
-        print(f"[consumer] connected from {addr}")
+        print(f"[consumer] thermal connected from {addr}")
         sys.stdout.flush()
-        handle_thermal_client(conn, sink)
-    finally:
-        srv.close()
-
-    # Akış bittiğinde özet
-    n = len(sink.mins)
-    print("\n=== STREAM SUMMARY ===")
-    print(f"count: {n}")
-    if n:
-        head = list(range(min(3, n)))
-        tail = list(range(max(0, n - 3), n))
-
-        def show(idx: int) -> None:
-            print(
-                f"[{idx}] frame={sink.frame_nos[idx]} ts={sink.timestamps[idx]} "
-                f"min={sink.mins[idx]:.2f} max={sink.maxs[idx]:.2f} mean={sink.means[idx]:.2f} "
-                f"path={'None' if sink.image_paths[idx] is None else sink.image_paths[idx]}"
-            )
-
-        print("\n-- first --")
-        for i in head:
-            show(i)
-        print("\n-- last --")
-        for i in tail:
-            show(i)
+        try:
+            handle_thermal_client(conn, sink)
+        except Exception as e:
+            print("[consumer] thermal client error:", e)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
+# ---------------------------
+# TORQUE TCP CONSUMER (DOKUNMADIM)
+# ---------------------------
 def detect_torque_anomaly(actual, ideal):
     diffs = [abs(a - i) for a, i in zip(actual, ideal)]
     flags = [d > TORQUE_THRESHOLD for d in diffs]
@@ -232,73 +259,72 @@ def run_torque_server() -> None:
     print(f"[torque] listening on {HOST}:{PORT_TORQUE_TCP} ...")
     sys.stdout.flush()
 
-    conn, addr = srv.accept()
-    print(f"[torque] connected from {addr}")
-    sys.stdout.flush()
+    while True:
+        conn, addr = srv.accept()
+        print(f"[torque] connected from {addr}")
+        sys.stdout.flush()
 
-    buf = b""
-    with conn:
-        while True:
-            chunk = conn.recv(4096)
-            if not chunk:
-                break
-            buf += chunk
+        buf = b""
+        with conn:
+            while True:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                buf += chunk
 
-            while b"\n" in buf:
-                line, buf = buf.split(b"\n", 1)
-                if not line.strip():
-                    continue
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    if not line.strip():
+                        continue
 
-                pkt = json.loads(line.decode("utf-8"))
+                    pkt = json.loads(line.decode("utf-8"))
 
-                diffs, flags = detect_torque_anomaly(pkt["torque_actual"], pkt["torque_ideal"])
-                pkt["diffs"] = diffs
-                pkt["anomaly"] = any(flags)
+                    diffs, flags = detect_torque_anomaly(pkt["torque_actual"], pkt["torque_ideal"])
+                    pkt["diffs"] = diffs
+                    pkt["anomaly"] = any(flags)
 
-                if pkt["anomaly"]:
-                    for j, d in enumerate(pkt["diffs"]):
-                        if d > TORQUE_THRESHOLD:
-                            key = ("TORQUE", j + 1)
-                            now = time.time()
+                    if pkt["anomaly"]:
+                        for j, d in enumerate(pkt["diffs"]):
+                            if d > TORQUE_THRESHOLD:
+                                key = ("TORQUE", j + 1)
+                                now = time.time()
 
-                            if key not in last_error_time or now - last_error_time[key] > ERROR_COOLDOWN:
-                                # SEVERITY
-                                if d > 0.6:
-                                    severity = "CRITICAL"
-                                elif d > 0.3:
-                                    severity = "WARNING"
-                                else:
-                                    severity = "INFO"
+                                if key not in last_error_time or now - last_error_time[key] > ERROR_COOLDOWN:
+                                    if d > 0.6:
+                                        severity = "CRITICAL"
+                                    elif d > 0.3:
+                                        severity = "WARNING"
+                                    else:
+                                        severity = "INFO"
 
-                                event = {
-                                    "timestamp": pkt["timestamp"],
-                                    "type": "TORQUE",
-                                    "severity": severity,
-                                    "message": f"Joint {j+1} torque exceeded threshold",
-                                    "meta": {
-                                        "joint": j + 1,
-                                        "diff": d,
-                                        "threshold": TORQUE_THRESHOLD,
-                                        "frame_no": pkt["frame_no"],
-                                    },
-                                }
+                                    event = {
+                                        "timestamp": pkt["timestamp"],
+                                        "type": "TORQUE",
+                                        "severity": severity,
+                                        "message": f"Joint {j+1} torque exceeded threshold",
+                                        "meta": {
+                                            "joint": j + 1,
+                                            "diff": d,
+                                            "threshold": TORQUE_THRESHOLD,
+                                            "frame_no": pkt["frame_no"],
+                                        },
+                                    }
 
-                                error_log.append(event)
-                                with open(EVENTS_LOG_FILE, "a", encoding="utf-8") as f:
-                                    f.write(json.dumps(event) + "\n")
+                                    error_log.append(event)
+                                    with open(EVENTS_LOG_FILE, "a", encoding="utf-8") as f:
+                                        f.write(json.dumps(event) + "\n")
 
-                                last_error_time[key] = now
+                                    last_error_time[key] = now
 
-                latest_torque = pkt
-
-                print(f"[torque] frame={pkt['frame_no']} anomaly={pkt['anomaly']} diffs={diffs}")
-                sys.stdout.flush()
-
+                    latest_torque = pkt
+                    print(f"[torque] frame={pkt['frame_no']} anomaly={pkt['anomaly']} diffs={diffs}")
+                    sys.stdout.flush()
 
 
+# ---------------------------
+# FASTAPI (UI)
+# ---------------------------
 app = FastAPI()
-
-# Static
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
@@ -329,14 +355,28 @@ def get_latest():
     return latest_frame
 
 
-@app.get("/frames/history")
-def get_frame_history():
-    return list(frame_history)
-
-
 @app.get("/errors")
 def get_errors():
     return error_log[-200:]
+
+
+# ---- SETTINGS API (kalıcı threshold) ----
+class ThermalSettingsIn(BaseModel):
+    thermal_threshold_c: float
+
+
+@app.get("/settings/thermal")
+def get_thermal_settings():
+    with _settings_lock:
+        return {"thermal_threshold_c": float(settings["thermal_threshold_c"])}
+
+
+@app.post("/settings/thermal")
+def set_thermal_settings(payload: ThermalSettingsIn):
+    with _settings_lock:
+        settings["thermal_threshold_c"] = float(payload.thermal_threshold_c)
+    save_settings()
+    return {"ok": True, "thermal_threshold_c": float(payload.thermal_threshold_c)}
 
 
 @app.websocket("/ws")
@@ -348,7 +388,7 @@ async def websocket_thermal(ws: WebSocket):
             try:
                 await ws.send_json(latest_frame)
             except Exception as e:
-                print("WebSocket send error:", e)
+                print("WebSocket thermal send error:", e)
         await asyncio.sleep(0.5)
 
 
@@ -361,17 +401,15 @@ async def websocket_torque(ws: WebSocket):
             try:
                 await ws.send_json(latest_torque)
             except Exception as e:
-                print("WebSocket send error:", e)
+                print("WebSocket torque send error:", e)
         await asyncio.sleep(0.5)
 
 
 if __name__ == "__main__":
-    # TCP listeners
     t1 = threading.Thread(target=run_thermal_server, daemon=True)
     t1.start()
 
     t2 = threading.Thread(target=run_torque_server, daemon=True)
     t2.start()
 
-    # Web server
     uvicorn.run(app, host="0.0.0.0", port=8000)

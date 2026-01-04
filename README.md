@@ -108,7 +108,7 @@ and selected via the file picker at runtime.
 
 ## 📷 Screenshots
 
-*(See screenshots above for Thermal, Torque, and Events dashboards.)*
+*(See screenshots below for Thermal, Torque, and Events dashboards.)*
 
 
 <img width="1455" height="830" alt="image" src="https://github.com/user-attachments/assets/aadcbc15-d6bb-4cf2-be35-9e986f9c24ab" />

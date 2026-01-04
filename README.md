@@ -88,6 +88,24 @@ Thresholds, data sources, and replay speed can be easily adapted to different ex
 
 ---
 
+## 📂 Sample Datasets (Google Drive)
+
+Example torque and thermal datasets used in this project are available on Google Drive:
+
+🔗 **Google Drive Dataset Folder**  
+https://drive.google.com/drive/folders/129q4hMMzVhQVXE9V8ysXHIrQGuOcl5sH
+
+**Recommended file:**  
+`kuka_log600_scnd_20hz (çanta kaldırıldı yerine koyuldu).csv`
+
+This CSV file can be used for **both torque and thermal monitoring**, as it contains
+the required torque and motor temperature columns.
+
+These CSV files can be loaded directly into the system using **Google Drive for Desktop**
+and selected via the file picker at runtime.
+
+---
+
 ## 📷 Screenshots
 
 *(See screenshots above for Thermal, Torque, and Events dashboards.)*

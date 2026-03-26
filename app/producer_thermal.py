@@ -8,6 +8,7 @@ import time
 import socket
 from datetime import datetime
 from dataclasses import dataclass, asdict
+from typing import Optional
 from tkinter import Tk
 from tkinter.filedialog import askopenfilename
 
@@ -26,7 +27,7 @@ JOINT_TEMP_KEYS = [
 
 @dataclass
 class FramePacket:
-    image_path: str | None
+    image_path: Optional[str]
     timestamp: str
     t_min: float
     t_max: float

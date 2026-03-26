@@ -11,6 +11,7 @@ import threading
 import asyncio
 import os
 import time
+from pathlib import Path
 from collections import deque
 from typing import Optional
 
@@ -20,22 +21,32 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 import uvicorn
 
+BASE_DIR = Path(__file__).resolve().parents[1]
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+try:
+    from models.model_manager import TorqueModelManager
+except Exception as _model_err:  # model artifacts optional
+    TorqueModelManager = None
+    _MODEL_IMPORT_ERROR = _model_err
 
 HOST = "127.0.0.1"
 
 PORT_THERMAL_TCP = 8765
 PORT_TORQUE_TCP = 8766
 
-EVENTS_LOG_FILE = "events.log"
-SETTINGS_FILE = "settings.json"
+EVENTS_LOG_FILE = str(BASE_DIR / "events.log")
+SETTINGS_FILE = str(BASE_DIR / "settings.json")
 
 ERROR_COOLDOWN = 5.0  # saniye
 FRAME_HISTORY_SIZE = 200
+MODEL_EVENT_COOLDOWN = 5.0
 
 # ---------------------------
 # TORQUE (DOKUNMADIM)
 # ---------------------------
-TORQUE_THRESHOLD = 0.47
+TORQUE_THRESHOLD = 2.0
 
 # ---------------------------
 # THERMAL (kalıcı ayar)
@@ -106,6 +117,27 @@ if os.path.exists(EVENTS_LOG_FILE):
                 error_log.append(json.loads(line))
             except Exception:
                 pass
+
+# ---------------------------
+# TORQUE MODEL MANAGER (PCA + IForest)
+# ---------------------------
+torque_models = None
+if TorqueModelManager is not None:
+    try:
+        torque_models = TorqueModelManager.load(artifacts_dir=str(BASE_DIR / "artifacts"))
+        if torque_models.enabled():
+            print(
+                "[torque] model manager loaded:"
+                f" PCA={'yes' if torque_models.pca else 'no'},"
+                f" IForest={'yes' if torque_models.iforest else 'no'}"
+            )
+        else:
+            print("[torque] model manager: artifacts not found, skipping")
+    except Exception as e:
+        print("[torque] model manager load error:", e)
+        torque_models = None
+else:
+    print("[torque] model manager unavailable:", _MODEL_IMPORT_ERROR)
 
 
 # ---------------------------
@@ -248,6 +280,46 @@ def detect_torque_anomaly(actual, ideal):
     return diffs, flags
 
 
+def _model_severity(score: float, threshold: float) -> str:
+    if threshold <= 0:
+        return "INFO"
+    ratio = score / threshold
+    if ratio >= 1.6:
+        return "CRITICAL"
+    if ratio >= 1.3:
+        return "WARNING"
+    return "INFO"
+
+
+def log_torque_model_event(event_type: str, score: float, threshold: float, frame_no: int, ts: str) -> None:
+    key = (event_type,)
+    now = time.time()
+    if key in last_error_time and now - last_error_time[key] <= MODEL_EVENT_COOLDOWN:
+        return
+
+    severity = _model_severity(score, threshold)
+    label = event_type.replace("TORQUE_", "")
+
+    event = {
+        "timestamp": ts,
+        "type": event_type,
+        "severity": severity,
+        "message": f"{label} anomaly score exceeded threshold",
+        "meta": {
+            "model": label,
+            "score": score,
+            "threshold": threshold,
+            "frame_no": frame_no,
+        },
+    }
+
+    error_log.append(event)
+    with open(EVENTS_LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(event) + "\n")
+
+    last_error_time[key] = now
+
+
 def run_torque_server() -> None:
     global latest_torque
 
@@ -278,8 +350,22 @@ def run_torque_server() -> None:
                         continue
 
                     pkt = json.loads(line.decode("utf-8"))
+                    ideal = pkt.get("torque_ideal")
+                    if torque_models is not None and torque_models.pca is not None:
+                        try:
+                            recon = torque_models.reconstruct(pkt["torque_actual"])
+                            if recon is not None:
+                                ideal = recon
+                                pkt["torque_ideal"] = recon
+                                pkt["ideal_source"] = "pca_reconstruct"
+                        except Exception as e:
+                            print("[torque] PCA reconstruct error:", e)
 
-                    diffs, flags = detect_torque_anomaly(pkt["torque_actual"], pkt["torque_ideal"])
+                    if ideal is None:
+                        ideal = [0.0] * len(pkt["torque_actual"])
+                        pkt["ideal_source"] = "zero"
+
+                    diffs, flags = detect_torque_anomaly(pkt["torque_actual"], ideal)
                     pkt["diffs"] = diffs
                     pkt["anomaly"] = any(flags)
 
@@ -316,8 +402,38 @@ def run_torque_server() -> None:
 
                                     last_error_time[key] = now
 
+                    # PCA + IForest scores
+                    model_payload = {}
+                    if torque_models is not None and torque_models.enabled():
+                        try:
+                            model_payload = torque_models.score(pkt["torque_actual"])
+                            pkt.update(model_payload)
+                        except Exception as e:
+                            print("[torque] model scoring error:", e)
+
+                    if model_payload.get("pca_anomaly"):
+                        log_torque_model_event(
+                            "TORQUE_PCA",
+                            model_payload["pca_score"],
+                            model_payload["pca_threshold"],
+                            pkt["frame_no"],
+                            pkt["timestamp"],
+                        )
+
+                    if model_payload.get("iforest_anomaly"):
+                        log_torque_model_event(
+                            "TORQUE_IFOREST",
+                            model_payload["iforest_score"],
+                            model_payload["iforest_threshold"],
+                            pkt["frame_no"],
+                            pkt["timestamp"],
+                        )
+
                     latest_torque = pkt
-                    print(f"[torque] frame={pkt['frame_no']} anomaly={pkt['anomaly']} diffs={diffs}")
+                    print(
+                        f"[torque] frame={pkt['frame_no']} anomaly={pkt['anomaly']}"
+                        f" model={pkt.get('model_anomaly')} diffs={diffs}"
+                    )
                     sys.stdout.flush()
 
 
@@ -325,27 +441,27 @@ def run_torque_server() -> None:
 # FASTAPI (UI)
 # ---------------------------
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
 @app.get("/")
 def root():
-    return FileResponse(os.path.join("static", "index.html"))
+    return FileResponse(str(BASE_DIR / "static" / "index.html"))
 
 
 @app.get("/thermal")
 def thermal_page():
-    return FileResponse(os.path.join("static", "thermal.html"))
+    return FileResponse(str(BASE_DIR / "static" / "thermal.html"))
 
 
 @app.get("/torque")
 def torque_page():
-    return FileResponse(os.path.join("static", "torque.html"))
+    return FileResponse(str(BASE_DIR / "static" / "torque.html"))
 
 
 @app.get("/events")
 def events_page():
-    return FileResponse(os.path.join("static", "events.html"))
+    return FileResponse(str(BASE_DIR / "static" / "events.html"))
 
 
 @app.get("/frames/latest")

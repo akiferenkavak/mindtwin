@@ -1,0 +1,23 @@
+{
+  "recon_error_threshold": 1.20560412488575,
+  "quantile": 0.985,
+  "n_components": 4,
+  "explained_variance_ratio": [
+    0.292626614386004,
+    0.20465995141754398,
+    0.19115636009015124,
+    0.1394873616109353
+  ],
+  "feature_columns": [
+    "TORQUE_A1",
+    "TORQUE_A2",
+    "TORQUE_A3",
+    "TORQUE_A4",
+    "TORQUE_A5",
+    "TORQUE_A6"
+  ],
+  "producer_scale": 781.0413343666676,
+  "producer_scale_p99": 351.4686004650004,
+  "training_samples": 3223,
+  "feature_dim": 6
+}

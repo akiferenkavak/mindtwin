@@ -1,0 +1,92 @@
+{
+  "generated_at": "2026-03-26T17:38:07.477105",
+  "csv": "kuka_log600_scnd_20hz(canta).csv",
+  "feature_columns": [
+    "TORQUE_A1",
+    "TORQUE_A2",
+    "TORQUE_A3",
+    "TORQUE_A4",
+    "TORQUE_A5",
+    "TORQUE_A6"
+  ],
+  "producer_scale": 781.0413343666676,
+  "producer_scale_p99": 351.4686004650004,
+  "inject": {
+    "inject_ratio": 0.5,
+    "inject_start": 806,
+    "inject_end": 2417,
+    "method": "spike",
+    "spike_factor": 1.0,
+    "noise_std": 0.35,
+    "seed": 42
+  },
+  "summary": {
+    "samples": 3223,
+    "pca_anomaly_rate": {
+      "all": 0.043748060812907226,
+      "injected": 0.07014276846679081,
+      "normal": 0.017369727047146403
+    },
+    "iforest_anomaly_rate": {
+      "all": 0.08966801116971765,
+      "injected": 0.1558038485412787,
+      "normal": 0.02357320099255583
+    },
+    "model_anomaly_rate": {
+      "all": 0.10611231771641327,
+      "injected": 0.17690875232774675,
+      "normal": 0.03535980148883375
+    },
+    "pca_score_quantiles": {
+      "0.5": 0.27411769218443455,
+      "0.95": 2.716814864428228,
+      "0.99": 5.272143390220703
+    },
+    "iforest_score_quantiles": {
+      "0.5": 0.4403473015236402,
+      "0.95": 0.5530546736958731,
+      "0.99": 0.5914439434726654
+    }
+  },
+  "model_meta": {
+    "pca": {
+      "recon_error_threshold": 2.874777467675251,
+      "quantile": 0.97,
+      "n_components": 2,
+      "explained_variance_ratio": [
+        0.29262661438600407,
+        0.20465995141754387
+      ],
+      "feature_columns": [
+        "TORQUE_A1",
+        "TORQUE_A2",
+        "TORQUE_A3",
+        "TORQUE_A4",
+        "TORQUE_A5",
+        "TORQUE_A6"
+      ],
+      "producer_scale": 781.0413343666676,
+      "producer_scale_p99": 351.4686004650004,
+      "training_samples": 3223,
+      "feature_dim": 6
+    },
+    "iforest": {
+      "score_threshold": 0.531761461191826,
+      "quantile": 0.95,
+      "contamination": "auto",
+      "n_estimators": 200,
+      "feature_columns": [
+        "TORQUE_A1",
+        "TORQUE_A2",
+        "TORQUE_A3",
+        "TORQUE_A4",
+        "TORQUE_A5",
+        "TORQUE_A6"
+      ],
+      "producer_scale": 781.0413343666676,
+      "producer_scale_p99": 351.4686004650004,
+      "training_samples": 3223,
+      "feature_dim": 6
+    }
+  }
+}

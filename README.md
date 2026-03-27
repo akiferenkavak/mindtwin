@@ -104,6 +104,10 @@ the required torque and motor temperature columns.
 These CSV files can be loaded directly into the system using **Google Drive for Desktop**
 and selected via the file picker at runtime.
 
+**Local data folder (optional):**  
+If you keep CSVs inside this repo, place them under `data/` and pass paths like:
+- `data/kuka_log600_scnd_20hz(canta).csv`
+
 ---
 
 ## 📷 Screenshots
@@ -118,5 +122,4 @@ and selected via the file picker at runtime.
 <img width="1455" height="830" alt="image" src="https://github.com/user-attachments/assets/e4d1b0f3-153f-4f1f-bc7e-69cdf13939a6" />
 
 <img width="1455" height="830" alt="image" src="https://github.com/user-attachments/assets/bab715fe-c84a-4dc9-be37-c808a4b6ca54" />
-
 

@@ -144,6 +144,8 @@ select {
         <option value="all">All events</option>
         <option value="THERMAL">Thermal</option>
         <option value="TORQUE">Torque</option>
+        <option value="TORQUE_PCA">Torque (PCA)</option>
+        <option value="TORQUE_IFOREST">Torque (IForest)</option>
       </select>
 
       <select id="jointFilter" disabled>
@@ -184,9 +186,17 @@ function num2(x) {
   return (typeof x === "number") ? x.toFixed(2) : "-";
 }
 
+function num4(x) {
+  return (typeof x === "number") ? x.toFixed(4) : "-";
+}
+
 function fmtMeta(type, meta = {}) {
   if (type === "TORQUE") {
     return `Joint ${meta.joint} | Δ=${num2(meta.diff)} (thr=${meta.threshold}) | Frame ${meta.frame_no}`;
+  }
+
+  if (type === "TORQUE_PCA" || type === "TORQUE_IFOREST") {
+    return `${meta.model || type} score=${num4(meta.score)} (thr=${num4(meta.threshold)}) | Frame ${meta.frame_no}`;
   }
 
   // THERMAL (Celsius göster)

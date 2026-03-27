@@ -77,7 +77,7 @@
   <script>
     const SLIDE_WINDOW = 30;
     const JOINTS = 6;
-    const TORQUE_THRESHOLD = 0.45;
+    const TORQUE_THRESHOLD = 2.0;
 
     const ctx = document.getElementById("chart").getContext("2d");
     const statusDiv = document.getElementById("status");
@@ -178,16 +178,37 @@
         maxJoint = pkt.diffs.indexOf(maxDiff) + 1;
       }
 
+      const fmtScore = (v, digits = 4) => (typeof v === "number" ? v.toFixed(digits) : "-");
+      const pcaScore = (typeof pkt.pca_score === "number") ? pkt.pca_score : null;
+      const pcaThr = (typeof pkt.pca_threshold === "number") ? pkt.pca_threshold : null;
+      const pcaAnom = !!pkt.pca_anomaly;
+
+      const ifScore = (typeof pkt.iforest_score === "number") ? pkt.iforest_score : null;
+      const ifThr = (typeof pkt.iforest_threshold === "number") ? pkt.iforest_threshold : null;
+      const ifAnom = !!pkt.iforest_anomaly;
+
+      const modelAnom = !!pkt.model_anomaly || pcaAnom || ifAnom;
+      const modelParts = [];
+      if (pcaScore !== null) {
+        modelParts.push(`PCA ${pcaAnom ? "⚠️" : "OK"} ${fmtScore(pcaScore)} (thr=${fmtScore(pcaThr)})`);
+      }
+      if (ifScore !== null) {
+        modelParts.push(`IForest ${ifAnom ? "⚠️" : "OK"} ${fmtScore(ifScore)} (thr=${fmtScore(ifThr)})`);
+      }
+
       const isAnomaly = !!pkt.anomaly || (typeof maxDiff === "number" && maxDiff >= TORQUE_THRESHOLD);
 
       if (typeof maxDiff === "number") {
-        statusDiv.innerText = isAnomaly
-          ? `⚠️ Torque anomaly detected | Joint ${maxJoint} | Δ=${maxDiff.toFixed(2)} (thr=${TORQUE_THRESHOLD}) | Frame ${frame} | ${ts}`
-          : `Normal | Joint ${maxJoint} | Δ=${maxDiff.toFixed(2)} (thr=${TORQUE_THRESHOLD}) | Frame ${frame} | ${ts}`;
-        statusDiv.style.color = isAnomaly ? "red" : "lightgreen";
+        const headline = isAnomaly
+          ? "⚠️ Torque anomaly (threshold)"
+          : (modelAnom ? "⚠️ Torque anomaly (model)" : "Normal");
+        const modelText = modelParts.length ? ` | ${modelParts.join(" | ")}` : "";
+        statusDiv.innerText = `${headline} | Joint ${maxJoint} | Δ=${maxDiff.toFixed(2)} (thr=${TORQUE_THRESHOLD}) | Frame ${frame} | ${ts}${modelText}`;
+        statusDiv.style.color = (isAnomaly || modelAnom) ? "red" : "lightgreen";
       } else {
-        statusDiv.innerText = `Data received | Frame ${frame} | ${ts}`;
-        statusDiv.style.color = "#ddd";
+        const modelText = modelParts.length ? ` | ${modelParts.join(" | ")}` : "";
+        statusDiv.innerText = `Data received | Frame ${frame} | ${ts}${modelText}`;
+        statusDiv.style.color = modelAnom ? "red" : "#ddd";
       }
     };
   </script>

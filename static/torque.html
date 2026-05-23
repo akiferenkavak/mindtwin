@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <title>Torque Anomaly Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    html,
+    body {
+      background: #111 !important;
+      color: #eee !important;
+      margin: 0;
+      padding: 2rem;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    nav {
+      background: #171616;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      padding: 1rem 2.5rem;
+      border-radius: 12px;
+    }
+
+    nav .title {
+      margin-right: auto;
+      font-weight: 600;
+      font-size: 1.1rem;
+      color: #911212;
+    }
+
+    nav a {
+      color: #945151;
+      text-decoration: none;
+      font-weight: 600;
+      padding: 0.45rem 0.9rem;
+      border-radius: 8px;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+
+    nav a:hover {
+      background: rgba(71, 132, 230, 0.788);
+      color: #fff;
+    }
+
+    #status {
+      margin-top: 1rem;
+      font-size: 1.05rem;
+      letter-spacing: 0.2px;
+      padding: 0.75rem 1rem;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      display: inline-block;
+      min-width: 420px;
+    }
+  </style>
+</head>
+
+<body>
+  <nav>
+    <div class="title">MindTwin</div>
+    <a href="/">Home</a>
+    <a href="/thermal">Thermal</a>
+    <a href="/torque">Torque</a>
+    <a href="/events">Events</a>
+  </nav>
+
+
+  <h1>Torque Anomaly Monitor</h1>
+
+  <canvas id="chart" width="700" height="350"></canvas>
+  <div id="status">Starting…</div>
+
+  <script>
+    const SLIDE_WINDOW = 30;
+    const JOINTS = 6;
+    const TORQUE_THRESHOLD = 2.0;
+
+    const ctx = document.getElementById("chart").getContext("2d");
+    const statusDiv = document.getElementById("status");
+
+    const JOINT_COLORS = [
+      "#4da6ff", // Joint 1 - blue
+      "#22c55e", // Joint 2 - green
+      "#eab308", // Joint 3 - yellow
+      "#f97316", // Joint 4 - orange
+      "#ef4444", // Joint 5 - red
+      "#a855f7"  // Joint 6 - purple
+    ];
+
+    const datasets = Array.from({ length: JOINTS }, (_, i) => ({
+      label: `Joint ${i + 1}`,
+      data: [],
+      borderColor: JOINT_COLORS[i],
+      backgroundColor: JOINT_COLORS[i],
+      pointBackgroundColor: JOINT_COLORS[i],
+      pointRadius: 3,
+      borderWidth: 2,
+      tension: 0.2
+    }));
+
+    datasets.push({
+      label: "Threshold",
+      data: [],
+      borderDash: [6, 6],
+      borderColor: "red",
+      borderWidth: 2,
+      pointRadius: 0
+    });
+
+    const chart = new Chart(ctx, {
+      type: "line",
+      data: { datasets },
+      options: {
+        animation: false,
+        scales: {
+          x: { type: "linear", title: { display: true, text: "Frame #" } },
+          y: { title: { display: true, text: "Torque Difference" }, suggestedMin: 0, suggestedMax: 1 }
+        },
+        plugins: {
+          legend: { labels: { color: "#ccc" } }
+        }
+      }
+    });
+
+    // ✅ IMPORTANT:
+    // 8766 is RAW TCP for producer->consumer, NOT a browser WebSocket.
+    // Browser must connect to FastAPI/Uvicorn websocket endpoint.
+    const ws = new WebSocket("ws://127.0.0.1:8000/ws/torque");
+
+    ws.onopen = () => {
+      statusDiv.innerText = "Connected. Waiting for incoming sensor data…";
+      statusDiv.style.color = "#ddd";
+    };
+
+    ws.onerror = () => {
+      statusDiv.innerText = "WebSocket error. Check that backend is running.";
+      statusDiv.style.color = "red";
+    };
+
+    ws.onclose = () => {
+      statusDiv.innerText = "Disconnected. Backend not running / closed.";
+      statusDiv.style.color = "red";
+    };
+
+    ws.onmessage = (event) => {
+      const pkt = JSON.parse(event.data);
+
+      // We expect pkt.diffs: array of length 6, pkt.frame_no, pkt.timestamp, pkt.anomaly (optional)
+      if (Array.isArray(pkt.diffs)) {
+        pkt.diffs.forEach((d, i) => {
+          datasets[i].data.push({ x: pkt.frame_no, y: d });
+          if (datasets[i].data.length > SLIDE_WINDOW) datasets[i].data.shift();
+        });
+
+        // threshold line
+        datasets[JOINTS].data.push({ x: pkt.frame_no, y: TORQUE_THRESHOLD });
+        if (datasets[JOINTS].data.length > SLIDE_WINDOW) datasets[JOINTS].data.shift();
+
+        // sliding x-axis
+        chart.options.scales.x.min = Math.max(pkt.frame_no - SLIDE_WINDOW + 1, 0);
+        chart.options.scales.x.max = pkt.frame_no;
+        chart.update("none");
+      }
+
+      // Status text (human readable)
+      const frame = pkt.frame_no ?? "-";
+      const ts = pkt.timestamp
+        ? pkt.timestamp.replace("T", " ").split(".")[0]
+        : new Date().toLocaleTimeString();
+
+      let maxDiff = null, maxJoint = null;
+      if (Array.isArray(pkt.diffs)) {
+        maxDiff = Math.max(...pkt.diffs);
+        maxJoint = pkt.diffs.indexOf(maxDiff) + 1;
+      }
+
+      const fmtScore = (v, digits = 4) => (typeof v === "number" ? v.toFixed(digits) : "-");
+      const pcaScore = (typeof pkt.pca_score === "number") ? pkt.pca_score : null;
+      const pcaThr = (typeof pkt.pca_threshold === "number") ? pkt.pca_threshold : null;
+      const pcaAnom = !!pkt.pca_anomaly;
+
+      const ifScore = (typeof pkt.iforest_score === "number") ? pkt.iforest_score : null;
+      const ifThr = (typeof pkt.iforest_threshold === "number") ? pkt.iforest_threshold : null;
+      const ifAnom = !!pkt.iforest_anomaly;
+
+      const modelAnom = !!pkt.model_anomaly || pcaAnom || ifAnom;
+      const modelParts = [];
+      if (pcaScore !== null) {
+        modelParts.push(`PCA ${pcaAnom ? "⚠️" : "OK"} ${fmtScore(pcaScore)} (thr=${fmtScore(pcaThr)})`);
+      }
+      if (ifScore !== null) {
+        modelParts.push(`IForest ${ifAnom ? "⚠️" : "OK"} ${fmtScore(ifScore)} (thr=${fmtScore(ifThr)})`);
+      }
+
+      const isAnomaly = !!pkt.anomaly || (typeof maxDiff === "number" && maxDiff >= TORQUE_THRESHOLD);
+
+      if (typeof maxDiff === "number") {
+        const headline = isAnomaly
+          ? "⚠️ Torque anomaly (threshold)"
+          : (modelAnom ? "⚠️ Torque anomaly (model)" : "Normal");
+        const modelText = modelParts.length ? ` | ${modelParts.join(" | ")}` : "";
+        statusDiv.innerText = `${headline} | Joint ${maxJoint} | Δ=${maxDiff.toFixed(2)} (thr=${TORQUE_THRESHOLD}) | Frame ${frame} | ${ts}${modelText}`;
+        statusDiv.style.color = (isAnomaly || modelAnom) ? "red" : "lightgreen";
+      } else {
+        const modelText = modelParts.length ? ` | ${modelParts.join(" | ")}` : "";
+        statusDiv.innerText = `Data received | Frame ${frame} | ${ts}${modelText}`;
+        statusDiv.style.color = modelAnom ? "red" : "#ddd";
+      }
+    };
+  </script>
+
+</body>
+<button id="chat-toggle"> KUKA AI</button>
+
+<div id="chatbot" class="hidden">
+  <div id="chat-header">
+    MindTwin AI Assistant
+  </div>
+
+  <div id="chat-messages"></div>
+
+  <div id="chat-input-area">
+    <input id="chat-input" placeholder="Ask about anomalies..." />
+    <button id="send-btn">Send</button>
+  </div>
+</div>
+
+<style>
+  #chat-toggle {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    border: none;
+    background: #911212;
+    color: white;
+    font-size: 1.1rem;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+    z-index: 9999;
+  }
+
+  #chatbot {
+    position: fixed;
+    right: 20px;
+    bottom: 100px;
+    width: 340px;
+    height: 420px;
+    background: #181818;
+    border: 1px solid #333;
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+    z-index: 9999;
+  }
+
+  .hidden {
+    display: none !important;
+  }
+
+  #chat-header {
+    padding: 1rem;
+    background: #911212;
+    font-weight: bold;
+  }
+
+  #chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+    font-size: 0.95rem;
+  }
+
+  .msg-user {
+    margin-bottom: 1rem;
+    color: #7dd3fc;
+  }
+
+  .msg-ai {
+    margin-bottom: 1rem;
+    color: #c4f5c4;
+  }
+
+  #chat-input-area {
+    display: flex;
+    border-top: 1px solid #333;
+  }
+
+  #chat-input {
+    flex: 1;
+    background: #111;
+    border: none;
+    color: white;
+    padding: 1rem;
+    outline: none;
+  }
+
+  #send-btn {
+    background: #911212;
+    color: white;
+    border: none;
+    padding: 1rem;
+    cursor: pointer;
+  }
+</style>
+
+<script>
+  const chatToggle = document.getElementById("chat-toggle");
+  const chatbot = document.getElementById("chatbot");
+
+  chatToggle.onclick = () => {
+    chatbot.classList.toggle("hidden");
+  };
+
+  const chatMessages = document.getElementById("chat-messages");
+  const chatInput = document.getElementById("chat-input");
+  const sendBtn = document.getElementById("send-btn");
+
+  async function sendMessage() {
+    const message = chatInput.value.trim();
+
+    if (!message) return;
+
+    chatMessages.innerHTML += `
+      <div class="msg-user">
+        <b>You:</b> ${message}
+      </div>
+    `;
+
+    chatInput.value = "";
+
+    try {
+      const res = await fetch("/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ message })
+      });
+
+      const data = await res.json();
+
+      chatMessages.innerHTML += `
+        <div class="msg-ai">
+          <b>AI:</b> ${data.reply}
+        </div>
+      `;
+
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    } catch (err) {
+      chatMessages.innerHTML += `
+        <div class="msg-ai">
+          <b>AI:</b> Backend connection error.
+        </div>
+      `;
+    }
+  }
+
+  sendBtn.onclick = sendMessage;
+
+  chatInput.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") sendMessage();
+  });
+</script>
+
+</html>

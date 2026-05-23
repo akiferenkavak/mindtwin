@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>System Events</title>
+
+<style>
+body {
+  background: #111;
+  color: #eee;
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  padding: 2rem;
+}
+
+nav {
+  background: #171616;
+  padding: 1rem 2.5rem;
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  border-radius: 12px;
+  align-items: center;
+}
+
+nav .title {
+  font-weight: 700;
+  color: #8b1d1d;
+  margin-right: auto;
+}
+
+nav a {
+  color: #6c2525;
+  text-decoration: none;
+  font-weight: 600;
+  padding: 0.45rem 0.9rem;
+  border-radius: 8px;
+}
+
+nav a:hover {
+  color: #fff;
+  background: rgba(71,132,230,0.788);
+}
+
+.page {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.events-header {
+  margin-bottom: 1.5rem;
+}
+
+.events-header h1 {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 0 0.75rem 0;
+}
+
+.events-header .badge {
+  background: #dc2626;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+#status {
+  margin-bottom: 0.75rem;
+  color: #ccc;
+  font-size: 0.9rem;
+}
+
+.filters {
+  display: flex;
+  gap: 1rem;
+  margin: 1rem 0;
+  flex-wrap: wrap;
+}
+
+select {
+  background: #1b1b1b;
+  color: #eee;
+  border: 1px solid #333;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+}
+
+#counter {
+  margin: 0.5rem 0 1rem 0;
+  color: #f87171;
+  font-weight: 600;
+}
+
+.events-list .event {
+  border-left: 5px solid #555;
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 0.9rem;
+  background: #181818;
+  border-radius: 12px;
+}
+
+.events-list .event.CRITICAL { border-color: #ff3b3b; }
+.events-list .event.WARNING  { border-color: #f59e0b; }
+.events-list .event.INFO     { border-color: #4da6ff; }
+
+.events-list .meta {
+  font-size: 0.9rem;
+  color: #aaa;
+  margin-top: 0.45rem;
+  line-height: 1.35;
+}
+</style>
+</head>
+
+<body>
+
+<nav>
+  <div class="title">MindTwin</div>
+  <a href="/">Home</a>
+  <a href="/thermal">Thermal</a>
+  <a href="/torque">Torque</a>
+  <a href="/events">Events</a>
+</nav>
+
+<div class="page">
+  <header class="events-header">
+    <h1>
+      System Events
+      <span id="criticalCount"></span>
+    </h1>
+
+    <div id="status">Waiting for events…</div>
+
+    <div class="filters">
+      <select id="timeFilter">
+        <option value="all">All time</option>
+        <option value="5">Last 5 minutes</option>
+      </select>
+
+      <select id="typeFilter">
+        <option value="all">All events</option>
+        <option value="THERMAL">Thermal</option>
+        <option value="TORQUE">Torque</option>
+        <option value="TORQUE_PCA">Torque (PCA)</option>
+        <option value="TORQUE_IFOREST">Torque (IForest)</option>
+      </select>
+
+      <select id="jointFilter" disabled>
+        <option value="all">All joints</option>
+        <option value="1">Joint 1</option>
+        <option value="2">Joint 2</option>
+        <option value="3">Joint 3</option>
+        <option value="4">Joint 4</option>
+        <option value="5">Joint 5</option>
+        <option value="6">Joint 6</option>
+      </select>
+    </div>
+
+    <div id="counter"></div>
+  </header>
+
+  <section class="events-list">
+    <div id="events"></div>
+  </section>
+</div>
+
+<script>
+const eventsDiv = document.getElementById("events");
+const statusDiv = document.getElementById("status");
+const criticalBadge = document.getElementById("criticalCount");
+
+// Kelvin -> Celsius
+const KELVIN_OFFSET = 273.15;
+function toCelsius(v) {
+  return (typeof v === "number" && v > 120) ? (v - KELVIN_OFFSET) : v;
+}
+
+function fmtTime(iso) {
+  return iso ? iso.replace("T"," ").split(".")[0] : "";
+}
+
+function num2(x) {
+  return (typeof x === "number") ? x.toFixed(2) : "-";
+}
+
+function num4(x) {
+  return (typeof x === "number") ? x.toFixed(4) : "-";
+}
+
+function fmtMeta(type, meta = {}) {
+  if (type === "TORQUE") {
+    return `Joint ${meta.joint} | Δ=${num2(meta.diff)} (thr=${meta.threshold}) | Frame ${meta.frame_no}`;
+  }
+
+  if (type === "TORQUE_PCA" || type === "TORQUE_IFOREST") {
+    return `${meta.model || type} score=${num4(meta.score)} (thr=${num4(meta.threshold)}) | Frame ${meta.frame_no}`;
+  }
+
+  // THERMAL (Celsius göster)
+  if (type === "THERMAL") {
+    const tmaxC = toCelsius(meta.t_max);
+    const thrC  = toCelsius(meta.threshold);
+    return `Tmax=${num2(tmaxC)}°C (thr=${num2(thrC)}°C) | Frame ${meta.frame_no}`;
+  }
+
+  return JSON.stringify(meta);
+}
+
+async function poll() {
+  try {
+    const res = await fetch("/errors", { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    statusDiv.textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+    statusDiv.style.color = "#ccc";
+
+    const timeFilter  = document.getElementById("timeFilter").value;
+    const typeFilter  = document.getElementById("typeFilter").value;
+    const jointFilter = document.getElementById("jointFilter").value;
+
+    const now = Date.now();
+
+    let html = "";
+    let criticalCount = 0;
+
+    data.slice().reverse().forEach(e => {
+      if (typeFilter !== "all" && e.type !== typeFilter) return;
+
+      if (timeFilter === "5") {
+        const t = new Date(e.timestamp).getTime();
+        if (now - t > 5 * 60 * 1000) return;
+      }
+
+      if (e.type === "TORQUE" && jointFilter !== "all") {
+        if (String(e.meta?.joint) !== jointFilter) return;
+      }
+
+      if (e.severity === "CRITICAL") criticalCount++;
+
+      html += `
+        <div class="event ${e.severity || "INFO"}">
+          <b>${e.type}</b> — ${e.severity}<br/>
+          ${e.message}
+          <div class="meta">
+            ${fmtMeta(e.type, e.meta)}<br/>
+            ${fmtTime(e.timestamp)}
+          </div>
+        </div>
+      `;
+    });
+
+    eventsDiv.innerHTML = html || `<div class="meta">No events yet.</div>`;
+
+    criticalBadge.innerHTML =
+      criticalCount > 0 ? `<span class="badge">${criticalCount} CRITICAL</span>` : "";
+
+  } catch (e) {
+    statusDiv.textContent = `Cannot load /errors — ${e.message}`;
+    statusDiv.style.color = "#f87171";
+  }
+}
+
+document.getElementById("typeFilter").addEventListener("change", () => {
+  document.getElementById("jointFilter").disabled =
+    document.getElementById("typeFilter").value !== "TORQUE";
+});
+
+setInterval(poll, 1000);
+poll();
+</script>
+
+</body>
+</html>

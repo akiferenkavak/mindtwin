@@ -482,15 +482,18 @@ def get_latest():
 @app.get("/errors")
 def get_errors():
     return error_log[-200:]
+
+
 class ChatRequest(BaseModel):
     message: str
 
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
-
     thermal_data = latest_frame if latest_frame else {}
     torque_data = latest_torque if latest_torque else {}
     recent_events = error_log[-20:]
+    recent_frames = list(frame_history)[-20:]
 
     prompt = f"""
 You are MindTwin AI, an intelligent assistant for a KUKA robotic arm monitoring dashboard.
@@ -507,21 +510,19 @@ Response style rules:
 - Be concise by default.
 - Use short monitoring-style responses for dashboard questions.
 - Use more detailed explanations only if the user explicitly asks for details.
-- If no anomaly exists, clearly say system status is normal.
-
-Tone rules:
-- Speak like a real-time industrial monitoring dashboard.
-- Avoid report-style explanations.
-- Avoid markdown and headers.
-- Prefer compact operational language.
-- Sound technical and direct.
 - Keep most responses under 2 sentences.
-- Do not sound like ChatGPT.
+- Sound like an industrial monitoring dashboard.
+Language rules:
+- Use simple engineering language.
+- Avoid overly academic or corporate wording.
+- Sound direct and practical.
 
-Do not use phrases like:
-- "The robot's current health is..."
-- "Overall status..."
-- "Based on the data..."
+Maintenance rules:
+- Give practical maintenance suggestions when anomalies appear.
+- Keep recommendations short and actionable.
+- Prefer commands like:
+  "Check", "Inspect", "Monitor", "Reduce load".
+- Maximum 3 recommendation lines.
 
 Latest thermal data:
 {thermal_data}
@@ -532,6 +533,9 @@ Latest torque data:
 Recent events:
 {recent_events}
 
+Recent thermal frames:
+{recent_frames}
+
 User question:
 {req.message}
 """
@@ -539,8 +543,14 @@ User question:
     try:
         response = gemini_model.generate_content(prompt)
 
+        reply = (
+            response.text
+            if response.text
+            else "No AI response generated."
+        )
+
         return {
-            "reply": response.text
+            "reply": reply
         }
 
     except Exception as e:
@@ -549,6 +559,9 @@ User question:
         return {
             "reply": f"Gemini error: {str(e)}"
         }
+
+
+# ---- SETTINGS API (kalıcı threshold) ----
 
 
 

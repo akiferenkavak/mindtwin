@@ -1,0 +1,25 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../artifacts"
+		},
+		{
+			"path": "../data"
+		},
+		{
+			"path": "../imgs"
+		},
+		{
+			"path": "../models"
+		},
+		{
+			"path": "../static"
+		},
+		{
+			"path": "../utils"
+		}
+	]
+}

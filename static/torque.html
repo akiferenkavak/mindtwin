@@ -58,6 +58,18 @@
       display: inline-block;
       min-width: 420px;
     }
+
+    #explain-graph-btn {
+      margin-top: 1rem;
+      margin-left: 1rem;
+      background: #8b1d1d;
+      color: white;
+      border: none;
+      padding: 0.7rem 1rem;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 600;
+    }
   </style>
 </head>
 
@@ -75,6 +87,9 @@
 
   <canvas id="chart" width="700" height="350"></canvas>
   <div id="status">Starting…</div>
+  <button id="explain-graph-btn">
+    Explain this graph with AI
+  </button>
 
   <script>
     const SLIDE_WINDOW = 30;
@@ -315,6 +330,7 @@
   }
 </style>
 
+
 <script>
   const chatToggle = document.getElementById("chat-toggle");
   const chatbot = document.getElementById("chatbot");
@@ -368,6 +384,15 @@
       `;
     }
   }
+  const explainGraphBtn = document.getElementById("explain-graph-btn");
+
+  explainGraphBtn.onclick = async () => {
+    chatInput.value =
+      "Explain this torque graph. Mention trend, risky joint, anomaly status, and maintenance action.";
+    chatbot.classList.remove("hidden");
+
+    await sendMessage();
+  };
 
   sendBtn.onclick = sendMessage;
 

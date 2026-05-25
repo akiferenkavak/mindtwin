@@ -25,13 +25,88 @@ from pydantic import BaseModel
 import uvicorn
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-load_dotenv("app/.env")
+load_dotenv(BASE_DIR / "app" / ".env")   # absolute path – her zaman bulunur
 
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+# API key: .env'den oku, yoksa doğrudan kullan
+_API_KEY = os.getenv("GOOGLE_API_KEY") or "AIzaSyB7n4hUvikR9uU6AEXXci7Wp0tJmcNDnY4"
+genai.configure(api_key=_API_KEY)
 
 gemini_model = genai.GenerativeModel("gemini-2.5-flash")
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
+
+# ---------------------------
+# LOAD KNOWLEDGE BASE FROM JSON FILES
+# ---------------------------
+def _load_json_safe(path: Path) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+ARTIFACTS_DIR = BASE_DIR / "artifacts"
+KB_EVAL_REPORT     = _load_json_safe(ARTIFACTS_DIR / "eval_report.json")
+KB_PCA_THRESHOLDS  = _load_json_safe(ARTIFACTS_DIR / "pca_thresholds.json")
+KB_IFOREST_THR     = _load_json_safe(ARTIFACTS_DIR / "iforest_threshold.json")
+KB_AUTOENCODER     = _load_json_safe(ARTIFACTS_DIR / "autoencoder_results.json")
+
+# ---------------------------
+# AUTOENCODER LOOKUPS (FRAME-INDEX BASED — döngüsel, timestamp bağımsız)
+# ---------------------------
+# AE verisi aynı CSV'den türetildiği için sıra numarası (frame_no % len) eşleşir.
+ae_multiple_list  = KB_AUTOENCODER.get("multiple", [])   # ordered list
+ae_multiple_thr   = KB_AUTOENCODER.get("meta", {}).get("multiple_threshold", None)
+ae_single_thr     = KB_AUTOENCODER.get("meta", {}).get("single_threshold", None)
+
+# single: feature → ordered list (her feature için ayrı liste)
+ae_single_by_feat = KB_AUTOENCODER.get("single", {})
+
+
+def translate_to_english(text: str) -> str:
+    if not text:
+        return text
+    # Convert Turkish expressions to clean English descriptions
+    text = text.replace("normalden dusuk", "below normal")
+    text = text.replace("normalden yuksek", "above normal")
+    text = text.replace("Normal calisma", "Normal operation")
+    text = text.replace("Normal çalışma", "Normal operation")
+    return text
+
+
+def translate_ae_data(data: dict) -> dict:
+    if not isinstance(data, dict):
+        return data
+    
+    # Translate multiple list
+    if "multiple" in data and isinstance(data["multiple"], list):
+        for item in data["multiple"]:
+            if "explanation" in item and isinstance(item["explanation"], str):
+                item["explanation"] = translate_to_english(item["explanation"])
+            if "root_cause" in item and isinstance(item["root_cause"], str):
+                item["root_cause"] = translate_to_english(item["root_cause"])
+                
+    # Translate single dictionary
+    if "single" in data and isinstance(data["single"], dict):
+        for feat, items in data["single"].items():
+            if isinstance(items, list):
+                for item in items:
+                    if "explanation" in item and isinstance(item["explanation"], str):
+                        item["explanation"] = translate_to_english(item["explanation"])
+                    if "direction" in item and isinstance(item["direction"], str):
+                        item["direction"] = "high" if item.get("direction") == "high" else "low"
+                        
+    return data
+
+
+def get_ae_for_frame(frame_no: int) -> dict:
+    """Return the AE multiple-row for this frame (cyclic wrap)."""
+    if not ae_multiple_list:
+        return {}
+    row = ae_multiple_list[frame_no % len(ae_multiple_list)]
+    return row
+
+
 
 try:
     from models.model_manager import TorqueModelManager
@@ -115,16 +190,15 @@ frame_history = deque(maxlen=FRAME_HISTORY_SIZE)
 error_log = []
 last_error_time = {}
 
-# Load persisted settings + old events
+# Load persisted settings - clean events.log for a fresh session
 load_settings()
 
-if os.path.exists(EVENTS_LOG_FILE):
-    with open(EVENTS_LOG_FILE, "r", encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            try:
-                error_log.append(json.loads(line))
-            except Exception:
-                pass
+try:
+    with open(EVENTS_LOG_FILE, "w", encoding="utf-8") as f:
+        f.truncate(0)
+    print("[consumer] events.log cleared successfully for fresh session.")
+except Exception as e:
+    print("[consumer] Error clearing events.log:", e)
 
 # ---------------------------
 # TORQUE MODEL MANAGER (PCA + IForest)
@@ -299,26 +373,49 @@ def _model_severity(score: float, threshold: float) -> str:
     return "INFO"
 
 
-def log_torque_model_event(event_type: str, score: float, threshold: float, frame_no: int, ts: str) -> None:
+def log_torque_model_event(
+    event_type: str, score: float, threshold: float,
+    frame_no: int, ts: str,
+    extra_meta: dict = None,
+    severity: str = None
+) -> None:
     key = (event_type,)
     now = time.time()
     if key in last_error_time and now - last_error_time[key] <= MODEL_EVENT_COOLDOWN:
         return
 
-    severity = _model_severity(score, threshold)
+    if severity is None:
+        severity = _model_severity(score, threshold)
     label = event_type.replace("TORQUE_", "")
+
+    meta = {
+        "model": label,
+        "score": score,
+        "threshold": threshold,
+        "frame_no": frame_no,
+    }
+    if extra_meta:
+        meta.update(extra_meta)
+
+    # Build concise human-readable message
+    worst = meta.get("worst_joint", "?")
+    if event_type == "TORQUE_AUTOENCODER":
+        msg = f"Autoencoder Torque Hatası: A{worst}"
+    elif event_type == "TORQUE_PCA":
+        msg = f"PCA Torque Hatası: A{worst}"
+    elif event_type == "TORQUE_IFOREST":
+        msg = f"IForest Torque Hatası: A{worst}"
+    else:
+        msg = f"{label} anomaly score exceeded threshold"
+        if "worst_joint" in meta:
+            msg += f" | En yüksek hata: A{meta['worst_joint']}"
 
     event = {
         "timestamp": ts,
         "type": event_type,
         "severity": severity,
-        "message": f"{label} anomaly score exceeded threshold",
-        "meta": {
-            "model": label,
-            "score": score,
-            "threshold": threshold,
-            "frame_no": frame_no,
-        },
+        "message": msg,
+        "meta": meta,
     }
 
     error_log.append(event)
@@ -420,12 +517,15 @@ def run_torque_server() -> None:
                             print("[torque] model scoring error:", e)
 
                     if model_payload.get("pca_anomaly"):
+                        # Find which joint has the highest diff for PCA context
+                        worst_j = int(pkt["diffs"].index(max(pkt["diffs"]))) + 1 if pkt.get("diffs") else None
                         log_torque_model_event(
                             "TORQUE_PCA",
                             model_payload["pca_score"],
                             model_payload["pca_threshold"],
                             pkt["frame_no"],
                             pkt["timestamp"],
+                            extra_meta={"worst_joint": worst_j} if worst_j else None,
                         )
 
                     if model_payload.get("iforest_anomaly"):
@@ -436,6 +536,124 @@ def run_torque_server() -> None:
                             pkt["frame_no"],
                             pkt["timestamp"],
                         )
+
+                    # -----------------------------------------------
+                    # AUTOENCODER injection (frame-index döngüsel eşleştirme)
+                    # -----------------------------------------------
+                    ae_row = get_ae_for_frame(pkt["frame_no"])
+                    ae_score     = float(ae_row.get("error", 0))
+                    ae_thr       = float(ae_row.get("threshold", ae_multiple_thr or 9.385))
+                    ae_is_anomaly = bool(ae_row.get("is_anomaly", ae_score > ae_thr))
+                    ae_root_cause = ae_row.get("root_cause", "")
+
+                    pkt["ae_score"]      = round(ae_score, 4)
+                    pkt["ae_threshold"]  = round(ae_thr, 4)
+                    pkt["ae_anomaly"]    = ae_is_anomaly
+                    pkt["ae_root_cause"] = translate_to_english(ae_root_cause)
+
+                    # Single Autoencoder torque anomaly check (events.html and events.log use this)
+                    single_torque_anomalies = []
+                    worst_single_ae_score = 0.0
+                    worst_single_ae_joint = None
+                    worst_single_ae_expl = ""
+                    single_thr = ae_single_thr or 7.20
+
+                    for i in range(1, 7):
+                        feat_name = f"TORQUE_A{i}"
+                        feat_list = ae_single_by_feat.get(feat_name, [])
+                        if feat_list:
+                            row = feat_list[pkt["frame_no"] % len(feat_list)]
+                            err = float(row.get("error", 0))
+                            is_anom = bool(row.get("is_anomaly", False))
+                            if is_anom:
+                                single_torque_anomalies.append((i, err, row.get("explanation", "")))
+                            if err > worst_single_ae_score:
+                                worst_single_ae_score = err
+                                worst_single_ae_joint = i
+                                worst_single_ae_expl = row.get("explanation", "")
+
+                    ae_torque_is_anomaly = len(single_torque_anomalies) > 0
+
+                    if ae_torque_is_anomaly:
+                        worst_j_ae = worst_single_ae_joint
+                        # If error is very high (ratio >= 1.4), set severity to CRITICAL (red)
+                        ratio = worst_single_ae_score / single_thr
+                        severity = "CRITICAL" if ratio >= 1.4 else "WARNING"
+
+                        log_torque_model_event(
+                            "TORQUE_AUTOENCODER",
+                            worst_single_ae_score,
+                            single_thr,
+                            pkt["frame_no"],
+                            pkt["timestamp"],
+                            extra_meta={
+                                "root_cause": f"TORQUE_A{worst_j_ae}",
+                                "worst_joint": worst_j_ae,
+                                "explanation": translate_to_english(worst_single_ae_expl),
+                            },
+                            severity=severity
+                        )
+
+                    # COMBINED (PCA + AE — her ikisi de model anomali)
+                    if ae_is_anomaly and model_payload.get("pca_anomaly"):
+                        log_torque_model_event(
+                            "TORQUE_COMBINED",
+                            max(ae_score, model_payload["pca_score"]),
+                            0,
+                            pkt["frame_no"],
+                            pkt["timestamp"],
+                        )
+
+
+                    # -----------------------------------------------
+                    # TORQUE_TRIPLE_THREAT:
+                    # Fiziksel tork eşiği AYNI ANDA modelden de geçerse
+                    # (aynı frame'de hem sensör hem model anomali dedi)
+                    # -----------------------------------------------
+                    any_model_anomaly = (
+                        model_payload.get("pca_anomaly")
+                        or model_payload.get("iforest_anomaly")
+                        or pkt.get("ae_anomaly", False)
+                    )
+                    if pkt.get("anomaly") and any_model_anomaly:
+                        key_tt = ("TORQUE_TRIPLE_THREAT",)
+                        now_tt = time.time()
+                        if key_tt not in last_error_time or now_tt - last_error_time[key_tt] > MODEL_EVENT_COOLDOWN:
+                            max_diff   = max(pkt["diffs"])
+                            worst_joint = pkt["diffs"].index(max_diff) + 1
+                            models_active = []
+                            if model_payload.get("pca_anomaly"):
+                                models_active.append(f"PCA={model_payload['pca_score']:.4f}")
+                            if model_payload.get("iforest_anomaly"):
+                                models_active.append(f"IForest={model_payload['iforest_score']:.4f}")
+                            if pkt.get("ae_anomaly"):
+                                models_active.append(f"AE={pkt['ae_score']:.4f}")
+                            event_tt = {
+                                "timestamp": pkt["timestamp"],
+                                "type": "TORQUE_TRIPLE_THREAT",
+                                "severity": "CRITICAL",
+                                "message": (
+                                    f"AYNI FRAME'DE SENSÖR + MODEL ANOMALİSİ! "
+                                    f"Joint {worst_joint} Δ={max_diff:.3f} | "
+                                    + ", ".join(models_active)
+                                ),
+                                "meta": {
+                                    "frame_no":    pkt["frame_no"],
+                                    "worst_joint": worst_joint,
+                                    "max_diff":    max_diff,
+                                    "torque_thr":  TORQUE_THRESHOLD,
+                                    "models":      models_active,
+                                    "pca_score":   model_payload.get("pca_score"),
+                                    "ae_score":    pkt.get("ae_score"),
+                                },
+                            }
+                            error_log.append(event_tt)
+                            with open(EVENTS_LOG_FILE, "a", encoding="utf-8") as f:
+                                f.write(json.dumps(event_tt) + "\n")
+                            last_error_time[key_tt] = now_tt
+                            print(f"[torque] ⚡ TRIPLE THREAT frame={pkt['frame_no']} joint={worst_joint}")
+
+
 
                     latest_torque = pkt
                     print(
@@ -472,6 +690,36 @@ def events_page():
     return FileResponse(str(BASE_DIR / "static" / "events.html"))
 
 
+@app.get("/autoencoder")
+def autoencoder_page():
+    return FileResponse(str(BASE_DIR / "static" / "autoencoder.html"))
+
+
+@app.get("/api/autoencoder/results")
+def autoencoder_results():
+    """Serve the pre-computed autoencoder anomaly results JSON."""
+    results_path = BASE_DIR / "artifacts" / "autoencoder_results.json"
+    if results_path.exists():
+        try:
+            with open(results_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            data = translate_ae_data(data)
+            return JSONResponse(content=data)
+        except Exception as e:
+            print("[autoencoder] Error reading results JSON:", e)
+            return JSONResponse(
+                content={"error": str(e), "multiple": [], "single": {}},
+                status_code=500
+            )
+    else:
+        # Return empty scaffold if file not yet generated
+        return JSONResponse(content={
+            "meta": {"note": "Run autoencoder/export_results.py to generate results"},
+            "multiple": [],
+            "single": {}
+        })
+
+
 @app.get("/frames/latest")
 def get_latest():
     if latest_frame is None:
@@ -488,67 +736,78 @@ class ChatRequest(BaseModel):
 @app.post("/chat")
 async def chat(req: ChatRequest):
 
-    thermal_data = latest_frame if latest_frame else {}
-    torque_data = latest_torque if latest_torque else {}
-    recent_events = error_log[-20:]
+    thermal_data   = latest_frame  if latest_frame  else {}
+    torque_data    = latest_torque if latest_torque else {}
+    recent_events  = error_log[-20:]
+
+    # Autoencoder summary: sadece GERÇEK anomalileri al (is_anomaly == True)
+    all_multiple = KB_AUTOENCODER.get("multiple", [])
+    real_anomalies = [a for a in all_multiple if a.get("is_anomaly") == True]
+    
+    # En yüksek error'a sahip 5 tanesini sırala
+    real_anomalies = sorted(real_anomalies, key=lambda x: x.get("error", 0), reverse=True)[:5]
+    
+    ae_meta = KB_AUTOENCODER.get("meta", {})
 
     prompt = f"""
-You are MindTwin AI, an intelligent assistant for a KUKA robotic arm monitoring dashboard.
+You are MindTwin AI — a specialized industrial AI assistant embedded in a KUKA robotic arm
+digital-twin monitoring dashboard. You ONLY answer questions related to:
+  • KUKA robot arm health monitoring
+  • Thermal anomalies (motor temperatures)
+  • Torque anomalies (joint torques A1-A6)
+  • PCA / Isolation Forest / Autoencoder anomaly detection results
+  • Maintenance recommendations based on sensor data
 
-Your responsibilities:
-- Analyze thermal, torque, PCA and Isolation Forest anomaly data.
-- Explain anomalies clearly.
-- Suggest possible engineering causes.
-- Recommend maintenance actions when needed.
-- Use only provided data.
-- Do not hallucinate nonexistent anomalies.
+If the user asks ANYTHING unrelated to these topics (e.g. general knowledge, coding,
+personal questions, weather, etc.), respond EXACTLY with:
+  "Ben bir KUKA robot izleme chatbotuyum. Sadece robot sağlığı, anomali tespiti ve bakım
+   konularında yardımcı olabilirim."
 
-Response style rules:
-- Be concise by default.
-- Use short monitoring-style responses for dashboard questions.
-- Use more detailed explanations only if the user explicitly asks for details.
-- If no anomaly exists, clearly say system status is normal.
+── KNOWLEDGE BASE (JSON dosyalarından yüklendi) ──────────────────────────────
 
-Tone rules:
-- Speak like a real-time industrial monitoring dashboard.
-- Avoid report-style explanations.
-- Avoid markdown and headers.
-- Prefer compact operational language.
-- Sound technical and direct.
-- Keep most responses under 2 sentences.
-- Do not sound like ChatGPT.
+[1] EVAL REPORT (PCA + IForest model metrikleri):
+{json.dumps(KB_EVAL_REPORT, indent=2)}
 
-Do not use phrases like:
-- "The robot's current health is..."
-- "Overall status..."
-- "Based on the data..."
+[2] PCA EŞİK DEĞERLERİ:
+{json.dumps(KB_PCA_THRESHOLDS, indent=2)}
 
-Latest thermal data:
-{thermal_data}
+[3] ISOLATION FOREST EŞİK DEĞERLERİ:
+{json.dumps(KB_IFOREST_THR, indent=2)}
 
-Latest torque data:
-{torque_data}
+[4] AUTOENCODER SONUÇLARI (En yüksek 5 anomali):
+Meta: {json.dumps(ae_meta)}
+Tespit Edilen Anomaliler: {json.dumps(real_anomalies, indent=2)}
 
-Recent events:
-{recent_events}
+── CANLI VERİ ────────────────────────────────────────────────────────────────
 
-User question:
+[5] Anlık thermal verisi:
+{json.dumps(thermal_data, indent=2)}
+
+[6] Anlık torque verisi:
+{json.dumps(torque_data, indent=2)}
+
+[7] Son 20 anomali eventi:
+{json.dumps(recent_events, indent=2)}
+
+── CEVAP KURALLARI ───────────────────────────────────────────────────────────
+- Kısa ve teknik ol. Dashboard operatörüne konuşur gibi.
+- Markdown, başlık, madde imi kullanma.
+- Çoğu cevabı 2 cümleyle bitir.
+- Anomali yoksa "sistem normal" de.
+- Veri yoksa "canlı veri bekleniyor" de, tahmin yürütme.
+- "Based on the data", "Overall status", "The robot's health" gibi ifadeler kullanma.
+
+── KULLANICI SORUSU ──────────────────────────────────────────────────────────
 {req.message}
 """
 
     try:
         response = gemini_model.generate_content(prompt)
-
-        return {
-            "reply": response.text
-        }
+        return {"reply": response.text}
 
     except Exception as e:
         print("CHAT ERROR:", e)
-
-        return {
-            "reply": f"Gemini error: {str(e)}"
-        }
+        return {"reply": f"Gemini API hatası: {str(e)}"}
 
 
 

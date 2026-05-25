@@ -68,6 +68,7 @@
     <a href="/thermal">Thermal</a>
     <a href="/torque">Torque</a>
     <a href="/events">Events</a>
+    <a href="/autoencoder">Autoencoder</a>
   </nav>
 
 
@@ -104,13 +105,43 @@
       tension: 0.2
     }));
 
+    // Model Datasets only (PCA & Autoencoder) — eski tek threshold kaldırıldı
+
     datasets.push({
-      label: "Threshold",
+      label: "PCA Score",
       data: [],
-      borderDash: [6, 6],
-      borderColor: "red",
+      borderColor: "#0ea5e9", // sky blue
+      backgroundColor: "transparent",
+      pointRadius: 2,
       borderWidth: 2,
-      pointRadius: 0
+      yAxisID: 'yModels'
+    });
+    datasets.push({
+      label: "PCA Threshold",
+      data: [],
+      borderDash: [4, 4],
+      borderColor: "#0ea5e9",
+      borderWidth: 1,
+      pointRadius: 0,
+      yAxisID: 'yModels'
+    });
+    datasets.push({
+      label: "AE Score",
+      data: [],
+      borderColor: "#d946ef", // fuchsia
+      backgroundColor: "transparent",
+      pointRadius: 2,
+      borderWidth: 2,
+      yAxisID: 'yModels'
+    });
+    datasets.push({
+      label: "AE Threshold",
+      data: [],
+      borderDash: [4, 4],
+      borderColor: "#d946ef",
+      borderWidth: 1,
+      pointRadius: 0,
+      yAxisID: 'yModels'
     });
 
     const chart = new Chart(ctx, {
@@ -120,7 +151,16 @@
         animation: false,
         scales: {
           x: { type: "linear", title: { display: true, text: "Frame #" } },
-          y: { title: { display: true, text: "Torque Difference" }, suggestedMin: 0, suggestedMax: 1 }
+          y: { 
+            title: { display: true, text: "Torque Diff" }, 
+            suggestedMin: 0, suggestedMax: 1 
+          },
+          yModels: {
+            position: 'right',
+            title: { display: true, text: "Model Score (PCA/AE)" },
+            grid: { drawOnChartArea: false }, // don't overlap grids
+            suggestedMin: 0
+          }
         },
         plugins: {
           legend: { labels: { color: "#ccc" } }
@@ -158,9 +198,21 @@
           if (datasets[i].data.length > SLIDE_WINDOW) datasets[i].data.shift();
         });
 
-        // threshold line
-        datasets[JOINTS].data.push({ x: pkt.frame_no, y: TORQUE_THRESHOLD });
+        // PCA Score & Threshold (index: JOINTS, JOINTS+1)
+        if (typeof pkt.pca_score === "number") {
+          datasets[JOINTS].data.push({ x: pkt.frame_no, y: pkt.pca_score });
+          datasets[JOINTS+1].data.push({ x: pkt.frame_no, y: pkt.pca_threshold });
+        }
         if (datasets[JOINTS].data.length > SLIDE_WINDOW) datasets[JOINTS].data.shift();
+        if (datasets[JOINTS+1].data.length > SLIDE_WINDOW) datasets[JOINTS+1].data.shift();
+
+        // AE Score & Threshold (index: JOINTS+2, JOINTS+3)
+        if (typeof pkt.ae_score === "number") {
+          datasets[JOINTS+2].data.push({ x: pkt.frame_no, y: pkt.ae_score });
+          datasets[JOINTS+3].data.push({ x: pkt.frame_no, y: pkt.ae_threshold });
+        }
+        if (datasets[JOINTS+2].data.length > SLIDE_WINDOW) datasets[JOINTS+2].data.shift();
+        if (datasets[JOINTS+3].data.length > SLIDE_WINDOW) datasets[JOINTS+3].data.shift();
 
         // sliding x-axis
         chart.options.scales.x.min = Math.max(pkt.frame_no - SLIDE_WINDOW + 1, 0);
@@ -168,51 +220,74 @@
         chart.update("none");
       }
 
-      // Status text (human readable)
+      // ── Status panel ──────────────────────────────────────────
       const frame = pkt.frame_no ?? "-";
       const ts = pkt.timestamp
         ? pkt.timestamp.replace("T", " ").split(".")[0]
         : new Date().toLocaleTimeString();
 
-      let maxDiff = null, maxJoint = null;
+      // PCA & AE live values
+      const pcaScore = typeof pkt.pca_score    === "number" ? pkt.pca_score    : null;
+      const pcaThr   = typeof pkt.pca_threshold === "number" ? pkt.pca_threshold : null;
+      const pcaAnom  = !!pkt.pca_anomaly;
+
+      const aeScore  = typeof pkt.ae_score    === "number" ? pkt.ae_score    : null;
+      const aeThr    = typeof pkt.ae_threshold === "number" ? pkt.ae_threshold : null;
+      const aeAnom   = !!pkt.ae_anomaly;
+
+      const fmt2 = v => typeof v === "number" ? v.toFixed(2) : "—";
+      const fmt4 = v => typeof v === "number" ? v.toFixed(4) : "—";
+
+      // List ALL joints and their diff, flag those that cross a model threshold
+      // We flag a joint as anomalous if PCA OR AE has fired (model-level anomaly)
+      let jointLines = "";
       if (Array.isArray(pkt.diffs)) {
-        maxDiff = Math.max(...pkt.diffs);
-        maxJoint = pkt.diffs.indexOf(maxDiff) + 1;
+        const parts = pkt.diffs.map((d, i) => {
+          const flag = (pcaAnom || aeAnom) && d === Math.max(...pkt.diffs) ? " ⚠️" : "";
+          return `A${i+1}:${d.toFixed(3)}${flag}`;
+        });
+        jointLines = parts.join("  ");
       }
 
-      const fmtScore = (v, digits = 4) => (typeof v === "number" ? v.toFixed(digits) : "-");
-      const pcaScore = (typeof pkt.pca_score === "number") ? pkt.pca_score : null;
-      const pcaThr = (typeof pkt.pca_threshold === "number") ? pkt.pca_threshold : null;
-      const pcaAnom = !!pkt.pca_anomaly;
+      // Model score lines with THEIR OWN thresholds (not 2.0)
+      const pcaLine = pcaScore !== null
+        ? `PCA  ${fmt4(pcaScore)} / threshold ${fmt4(pcaThr)}  →  ${pcaAnom ? "⚠️ ANOMALY" : "✅ Normal"}`
+        : "PCA  —  (model not loaded)";
 
-      const ifScore = (typeof pkt.iforest_score === "number") ? pkt.iforest_score : null;
-      const ifThr = (typeof pkt.iforest_threshold === "number") ? pkt.iforest_threshold : null;
-      const ifAnom = !!pkt.iforest_anomaly;
+      const aeLine = aeScore !== null
+        ? `AE   ${fmt4(aeScore)} / threshold ${fmt4(aeThr)}  →  ${aeAnom ? "⚠️ ANOMALY" : "✅ Normal"}`
+        : "AE   —  (model not loaded)";
 
-      const modelAnom = !!pkt.model_anomaly || pcaAnom || ifAnom;
-      const modelParts = [];
-      if (pcaScore !== null) {
-        modelParts.push(`PCA ${pcaAnom ? "⚠️" : "OK"} ${fmtScore(pcaScore)} (thr=${fmtScore(pcaThr)})`);
-      }
-      if (ifScore !== null) {
-        modelParts.push(`IForest ${ifAnom ? "⚠️" : "OK"} ${fmtScore(ifScore)} (thr=${fmtScore(ifThr)})`);
-      }
-
-      const isAnomaly = !!pkt.anomaly || (typeof maxDiff === "number" && maxDiff >= TORQUE_THRESHOLD);
-
-      if (typeof maxDiff === "number") {
-        const headline = isAnomaly
-          ? "⚠️ Torque anomaly (threshold)"
-          : (modelAnom ? "⚠️ Torque anomaly (model)" : "Normal");
-        const modelText = modelParts.length ? ` | ${modelParts.join(" | ")}` : "";
-        statusDiv.innerText = `${headline} | Joint ${maxJoint} | Δ=${maxDiff.toFixed(2)} (thr=${TORQUE_THRESHOLD}) | Frame ${frame} | ${ts}${modelText}`;
-        statusDiv.style.color = (isAnomaly || modelAnom) ? "red" : "lightgreen";
+      // Headline
+      let headline, color;
+      if (pcaAnom && aeAnom) {
+        headline = "🚨 DOUBLE ANOMALY — PCA + AUTOENCODER";
+        color = "#ef4444";
+      } else if (pcaAnom) {
+        headline = "⚠️ PCA ANOMALY";
+        color = "#f97316";
+      } else if (aeAnom) {
+        headline = "⚠️ AUTOENCODER ANOMALY";
+        color = "#f97316";
       } else {
-        const modelText = modelParts.length ? ` | ${modelParts.join(" | ")}` : "";
-        statusDiv.innerText = `Data received | Frame ${frame} | ${ts}${modelText}`;
-        statusDiv.style.color = modelAnom ? "red" : "#ddd";
+        headline = "✅ Normal";
+        color = "#22c55e";
       }
+
+      statusDiv.innerHTML =
+        `<b style="font-size:1.05rem">${headline}</b><br>` +
+        `<span style="font-family:monospace;font-size:0.88rem">${jointLines}</span><br>` +
+        `<span style="font-family:monospace;font-size:0.85rem;opacity:0.85">` +
+          `${pcaLine}<br>${aeLine}` +
+        `</span><br>` +
+        `<span style="opacity:0.5;font-size:0.8rem">Frame ${frame} | ${ts}</span>`;
+
+      statusDiv.style.color = color;
+      statusDiv.style.borderColor = (pcaAnom || aeAnom) ? color : "rgba(255,255,255,0.08)";
+      statusDiv.style.fontWeight = (pcaAnom && aeAnom) ? "bold" : "normal";
     };
+
+
   </script>
 
 </body>

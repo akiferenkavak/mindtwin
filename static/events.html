@@ -106,12 +106,39 @@ select {
 .events-list .event.WARNING  { border-color: #f59e0b; }
 .events-list .event.INFO     { border-color: #4da6ff; }
 
+/* Special styling for DOUBLE ANOMALY */
+.events-list .event.COMBINED {
+  border-color: #d946ef;
+  background: rgba(217, 70, 239, 0.08);
+  box-shadow: 0 0 10px rgba(217, 70, 239, 0.2);
+}
+
+/* Special styling for AUTOENCODER events (matching autoencoder page colors) */
+.events-list .event.AUTOENCODER {
+  border-color: #d946ef;
+  background: rgba(217, 70, 239, 0.04);
+}
+
+/* Special styling for TRIPLE THREAT: sensör + model eş zamanlı anomali */
+.events-list .event.TRIPLE_THREAT {
+  border-color: #ff4500;
+  background: rgba(255, 69, 0, 0.10);
+  box-shadow: 0 0 16px rgba(255, 69, 0, 0.35);
+  animation: triple-pulse 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes triple-pulse {
+  from { box-shadow: 0 0 8px rgba(255, 69, 0, 0.35); }
+  to   { box-shadow: 0 0 22px rgba(255, 69, 0, 0.7); }
+}
+
 .events-list .meta {
   font-size: 0.9rem;
   color: #aaa;
   margin-top: 0.45rem;
   line-height: 1.35;
 }
+
 </style>
 </head>
 
@@ -123,6 +150,7 @@ select {
   <a href="/thermal">Thermal</a>
   <a href="/torque">Torque</a>
   <a href="/events">Events</a>
+  <a href="/autoencoder">Autoencoder</a>
 </nav>
 
 <div class="page">
@@ -146,6 +174,9 @@ select {
         <option value="TORQUE">Torque</option>
         <option value="TORQUE_PCA">Torque (PCA)</option>
         <option value="TORQUE_IFOREST">Torque (IForest)</option>
+        <option value="TORQUE_AUTOENCODER">Torque (Autoencoder)</option>
+        <option value="TORQUE_COMBINED">Torque (Combined PCA+AE)</option>
+        <option value="TORQUE_TRIPLE_THREAT">⚡ Torque (Sensor + Model Simultaneous Anomaly)</option>
       </select>
 
       <select id="jointFilter" disabled>
@@ -196,7 +227,23 @@ function fmtMeta(type, meta = {}) {
   }
 
   if (type === "TORQUE_PCA" || type === "TORQUE_IFOREST") {
-    return `${meta.model || type} score=${num4(meta.score)} (thr=${num4(meta.threshold)}) | Frame ${meta.frame_no}`;
+    const jointPart = meta.worst_joint ? ` | ⚡ Worst Joint: A${meta.worst_joint}` : "";
+    return `${meta.model || type} score=${num4(meta.score)} (thr=${num4(meta.threshold)})${jointPart} | Frame ${meta.frame_no}`;
+  }
+
+  if (type === "TORQUE_AUTOENCODER") {
+    const expl = meta.explanation ? ` | Explanation: ${meta.explanation}` : "";
+    return `Worst Joint: A${meta.worst_joint}${expl} | AE Single Score=${num4(meta.score)} (thr=${num4(meta.threshold)}) | Frame ${meta.frame_no}`;
+  }
+
+
+  if (type === "TORQUE_COMBINED") {
+    return `🚨 DOUBLE ANOMALY (PCA + AE) DETECTED | Max Score=${num4(meta.score)} | Frame ${meta.frame_no}`;
+  }
+
+  if (type === "TORQUE_TRIPLE_THREAT") {
+    const models = Array.isArray(meta.models) ? meta.models.join(" | ") : "-";
+    return `⚡ Joint ${meta.worst_joint} Δ=${num2(meta.max_diff)} (thr=${meta.torque_thr}) | Active Models: ${models} | Frame ${meta.frame_no}`;
   }
 
   // THERMAL (Celsius göster)
@@ -241,14 +288,32 @@ async function poll() {
 
       if (e.severity === "CRITICAL") criticalCount++;
 
+      let extraClass = e.severity || "INFO";
+      if (e.type === "TORQUE_COMBINED") {
+          extraClass = "COMBINED";
+      }
+      if (e.type === "TORQUE_TRIPLE_THREAT") {
+          extraClass = "TRIPLE_THREAT";
+      }
+      if (e.type === "TORQUE_AUTOENCODER" && e.severity !== "CRITICAL") {
+          extraClass = "AUTOENCODER";
+      }
+
+      let sevBadge = "";
+      if (e.severity === "CRITICAL") {
+          sevBadge = `<span style="background:#dc2626;color:white;padding:2px 6px;border-radius:4px;font-size:0.75rem;font-weight:bold;margin-left:0.5rem;display:inline-block;vertical-align:middle;">CRITICAL (High Priority)</span>`;
+      } else if (e.severity === "WARNING") {
+          sevBadge = `<span style="background:#d97706;color:white;padding:2px 6px;border-radius:4px;font-size:0.75rem;font-weight:bold;margin-left:0.5rem;display:inline-block;vertical-align:middle;">WARNING (Medium Priority)</span>`;
+      } else {
+          sevBadge = `<span style="background:#2563eb;color:white;padding:2px 6px;border-radius:4px;font-size:0.75rem;font-weight:bold;margin-left:0.5rem;display:inline-block;vertical-align:middle;">INFO (Low Priority)</span>`;
+      }
+
       html += `
-        <div class="event ${e.severity || "INFO"}">
-          <b>${e.type}</b> — ${e.severity}<br/>
-          ${e.message}
-          <div class="meta">
-            ${fmtMeta(e.type, e.meta)}<br/>
-            ${fmtTime(e.timestamp)}
-          </div>
+        <div class="event ${extraClass}">
+          <strong>[${fmtTime(e.timestamp)}] ${e.type}</strong> 
+          ${sevBadge}
+          <span style="color:#ddd; margin-left:0.5rem">${e.message}</span>
+          <div class="meta">${fmtMeta(e.type, e.meta)}</div>
         </div>
       `;
     });

@@ -35,15 +35,37 @@ class FramePacket:
     frame_no: int
 
 def pick_csv():
-    root = Tk()
-    root.withdraw()
-    path = askopenfilename(
-        title="Google Drive içinden motor sıcaklık CSV seç",
-        filetypes=[("CSV files", "*.csv")]
-    )
-    if not path:
-        raise SystemExit("CSV seçilmedi.")
-    return path
+    import os
+    possible_paths = [
+        "data/kuka_log600_scnd_20hz(canta)_injected.csv",
+        "../data/kuka_log600_scnd_20hz(canta)_injected.csv",
+        "data/kuka_log600_scnd_20hz(canta).csv",
+        "../data/kuka_log600_scnd_20hz(canta).csv",
+    ]
+    for p in possible_paths:
+        if os.path.exists(p):
+            return p
+    # Try searching the data directory
+    for data_dir in ["data", "../data", "mindtwin/data", "../mindtwin/data"]:
+        if os.path.exists(data_dir):
+            files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith(".csv")]
+            if files:
+                return files[0]
+    # Fallback to tkinter if available
+    try:
+        from tkinter import Tk
+        from tkinter.filedialog import askopenfilename
+        root = Tk()
+        root.withdraw()
+        path = askopenfilename(
+            title="Google Drive içinden motor sıcaklık CSV seç",
+            filetypes=[("CSV files", "*.csv")]
+        )
+        if path:
+            return path
+    except Exception:
+        pass
+    raise RuntimeError("Thermal CSV file could not be found automatically.")
 
 def to_float(x):
     try:

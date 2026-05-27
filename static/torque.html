@@ -2,16 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Torque Anomaly Monitor</title>
+  <title>Torque Monitor — MindTwin</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
     html, body {
-      background: #111 !important;
-      color: #eee !important;
+      background: #111;
+      color: #eee;
       margin: 0;
       padding: 2rem;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      min-height: 100vh;
     }
 
     nav {
@@ -23,194 +26,902 @@
       padding: 1rem 2.5rem;
       border-radius: 12px;
     }
+    nav .title { margin-right: auto; font-weight: 600; font-size: 1.1rem; color: #911212; }
+    nav a { color: #945151; text-decoration: none; font-weight: 600; padding: 0.45rem 0.9rem; border-radius: 8px; transition: background 0.2s, color 0.2s; }
+    nav a:hover { background: rgba(71,132,230,0.788); color: #fff; }
 
-    nav .title {
-      margin-right: auto;
-      font-weight: 600;
-      font-size: 1.1rem;
-      color: #911212;
+    /* ── Page header ─────────────────────────── */
+    .page-header { margin-bottom: 1.5rem; }
+    .page-header h1 { margin: 0 0 0.3rem 0; font-size: 1.75rem; font-weight: 700; }
+    .page-header p  { margin: 0; color: #777; font-size: 0.9rem; }
+
+    /* ── Toolbar ──────────────────────────────── */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
     }
 
-    nav a {
-      color: #945151;
-      text-decoration: none;
-      font-weight: 600;
-      padding: 0.45rem 0.9rem;
-      border-radius: 8px;
-      transition: background 0.2s ease, color 0.2s ease;
+    .live-toggle { display: flex; align-items: center; gap: 0.5rem; margin-left: auto; }
+    .live-label  { font-size: 0.88rem; color: #aaa; font-weight: 600; }
+    .switch      { position: relative; display: inline-block; width: 44px; height: 24px; }
+    .switch input { display: none; }
+    .slider {
+      position: absolute; inset: 0;
+      background: #333; border-radius: 24px; cursor: pointer; transition: 0.3s;
+    }
+    .slider::before {
+      content: ""; position: absolute;
+      width: 18px; height: 18px; left: 3px; bottom: 3px;
+      background: #fff; border-radius: 50%; transition: 0.3s;
+    }
+    input:checked + .slider { background: #911212; }
+    input:checked + .slider::before { transform: translateX(20px); }
+
+    .live-indicator {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      font-size: 0.82rem; color: #ef4444; font-weight: 700;
+      opacity: 0; transition: opacity 0.3s;
+    }
+    .live-indicator.on { opacity: 1; }
+    .live-dot {
+      width: 7px; height: 7px; background: #ef4444; border-radius: 50%;
+      animation: pulse 1.2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.4; transform: scale(0.75); }
     }
 
-    nav a:hover {
-      background: rgba(71, 132, 230, 0.788);
-      color: #fff;
+    .btn {
+      padding: 0.45rem 1rem; border: none; border-radius: 8px;
+      cursor: pointer; font-size: 0.88rem; font-weight: 600;
+      font-family: inherit; transition: background 0.18s, transform 0.1s;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn-secondary { background: #222; color: #ccc; border: 1px solid #333; }
+    .btn-secondary:hover { background: #2c2c2c; }
+
+    /* ── Stats bar ────────────────────────────── */
+    .stats-bar { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+    .stat-pill {
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px; padding: 0.55rem 1rem; font-size: 0.85rem;
+    }
+    .stat-pill .lbl { color: #777; margin-right: 0.35rem; }
+    .stat-pill .val { color: #eee; font-weight: 700; }
+    .stat-pill .val.red   { color: #ef4444; }
+    .stat-pill .val.green { color: #22c55e; }
+    .stat-pill .val.purple{ color: #a855f7; }
+
+    /* ── Anomaly counter cards ─────────────────── */
+    .counter-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    @media (max-width: 900px) {
+      .counter-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    @media (max-width: 560px) {
+      .counter-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .counter-card {
+      background: #181818;
+      border: 1px solid #2d2d2d;
+      border-radius: 16px;
+      padding: 1.25rem 1rem 1rem 1rem;
+      position: relative;
+      text-align: center;
+      transition: box-shadow 0.25s, border-color 0.25s;
+      overflow: hidden;
+    }
+
+    .counter-card.bumped {
+      box-shadow: 0 0 18px rgba(255,255,255,0.1);
+    }
+
+    .counter-card.combined-flash {
+      animation: combinedGlow 0.6s ease-out;
+    }
+    @keyframes combinedGlow {
+      0%  { box-shadow: 0 0 0px rgba(236,72,153,0); }
+      40% { box-shadow: 0 0 28px rgba(236,72,153,0.5); }
+      100%{ box-shadow: 0 0 0px rgba(236,72,153,0); }
+    }
+
+    .counter-card .accent-bar {
+      position: absolute; top: 0; left: 0;
+      width: 100%; height: 4px; border-radius: 16px 16px 0 0;
+      transition: background 0.4s;
+    }
+
+    .counter-card .axis-label {
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; color: #6b7280;
+      margin-bottom: 0.3rem;
+    }
+
+    .counter-card .big-count {
+      font-size: 3rem; font-weight: 900; line-height: 1;
+      margin-bottom: 0.2rem;
+      transition: color 0.3s;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .counter-card .count-lbl {
+      font-size: 0.7rem; color: #6b7280; margin-bottom: 0.55rem;
+    }
+
+    .counter-card .breakdown {
+      display: flex; justify-content: center; gap: 0.4rem; flex-wrap: wrap;
+    }
+
+    .chip {
+      display: inline-block; padding: 0.12rem 0.45rem;
+      border-radius: 4px; font-size: 0.68rem; font-weight: 700;
+    }
+    .chip.pca  { background: #1d4ed8; color: #fff; }
+    .chip.ae   { background: #7c3aed; color: #fff; }
+    .chip.comb { background: #be185d; color: #fff; }
+
+    /* ── Progress bar for replay ──────────────── */
+    .replay-bar-wrap {
+      margin-bottom: 1.5rem;
+    }
+    .replay-bar-labels {
+      display: flex; justify-content: space-between;
+      font-size: 0.75rem; color: #555; margin-bottom: 0.3rem;
+    }
+    .replay-bar-track {
+      height: 5px; background: #222; border-radius: 4px; overflow: hidden;
+    }
+    .replay-bar-fill {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, #1d4ed8, #7c3aed, #be185d);
+      border-radius: 4px;
+      transition: width 0.3s;
+    }
+
+    /* ── Live chart section (bottom) ─────────── */
+    .chart-section {
+      background: #181818;
+      border: 1px solid #2d2d2d;
+      border-radius: 14px;
+      padding: 1.5rem;
+      margin-top: 2rem;
+    }
+    .chart-section h2 {
+      margin: 0 0 1rem 0;
+      font-size: 1rem; color: #9ca3af; font-weight: 600;
     }
 
     #status {
-      margin-top: 1rem;
-      font-size: 1.05rem;
-      letter-spacing: 0.2px;
+      font-size: 1rem;
       padding: 0.75rem 1rem;
       border-radius: 12px;
-      background: rgba(255,255,255,0.06);
+      background: rgba(255,255,255,0.05);
       border: 1px solid rgba(255,255,255,0.08);
       display: inline-block;
       min-width: 420px;
+      margin-top: 1rem;
     }
+
+    #explain-graph-btn {
+      margin-top: 1rem;
+      margin-left: 1rem;
+      background: #8b1d1d;
+      color: white;
+      border: none;
+      padding: 0.7rem 1rem;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    /* ── Chatbot (identical) ──────────────────── */
+    #chat-toggle {
+      position: fixed; right: 20px; bottom: 20px;
+      width: 64px; height: 64px; border-radius: 50%;
+      border: none; background: #911212; color: white;
+      font-size: 1.1rem; font-weight: bold; cursor: pointer;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.5); z-index: 9999;
+    }
+    #chatbot {
+      position: fixed; right: 20px; bottom: 100px;
+      width: 340px; height: 420px; background: #181818;
+      border: 1px solid #333; border-radius: 16px;
+      display: flex; flex-direction: column; overflow: hidden;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5); z-index: 9999;
+    }
+    .hidden { display: none !important; }
+    #chat-header { padding: 1rem; background: #911212; font-weight: bold; }
+    #chat-messages { flex: 1; overflow-y: auto; padding: 1rem; font-size: 0.95rem; }
+    .msg-user { margin-bottom: 1rem; color: #7dd3fc; }
+    .msg-ai   { margin-bottom: 1rem; color: #c4f5c4; }
+    #chat-input-area { display: flex; border-top: 1px solid #333; }
+    #chat-input { flex: 1; background: #111; border: none; color: white; padding: 1rem; outline: none; }
+    #send-btn { background: #911212; color: white; border: none; padding: 1rem; cursor: pointer; }
   </style>
 </head>
 
 <body>
- <nav>
-  <div class="title">MindTwin</div>
-  <a href="/">Home</a>
-  <a href="/thermal">Thermal</a>
-  <a href="/torque">Torque</a>
-  <a href="/events">Events</a>
-</nav>
+  <nav>
+    <div class="title">MindTwin</div>
+    <a href="/">Home</a>
+    <a href="/thermal">Thermal</a>
+    <a href="/torque">Torque</a>
+    <a href="/events">Events</a>
+    <a href="/autoencoder">Autoencoder</a>
+    <a href="/pca">PCA</a>
+  </nav>
 
+  <div class="page-header">
+    <h1>Torque Monitor</h1>
+    <p>Anomaly counts per axis from PCA + Autoencoder results. Combined = same second &amp; same feature detected by both.</p>
+  </div>
 
-  <h1>Torque Anomaly Monitor</h1>
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="live-toggle">
+      <span class="live-label">Live Mode</span>
+      <label class="switch">
+        <input type="checkbox" id="liveModeToggle" checked />
+        <span class="slider"></span>
+      </label>
+      <span class="live-indicator" id="liveIndicator">
+        <span class="live-dot"></span> LIVE
+      </span>
+      <button class="btn btn-secondary" id="replayBtn" onclick="startReplay()" title="Replay from beginning">↺ Replay</button>
+    </div>
+  </div>
 
-  <canvas id="chart" width="700" height="350"></canvas>
-  <div id="status">Starting…</div>
+  <!-- Stats bar (Hidden per user request) -->
+  <div id="statsBar" style="display:none;">
+    <div id="statSource"></div>
+    <div id="statPca"></div>
+    <div id="statAe"></div>
+    <div id="statComb"></div>
+    <div id="statFrame"></div>
+  </div>
+
+  <!-- Anomaly counter cards -->
+  <div class="counter-grid" id="counterGrid">
+    <!-- Populated by JS -->
+  </div>
+
+  <!-- Replay progress bar -->
+  <div class="replay-bar-wrap" id="replayBarWrap" style="display:none;">
+    <div class="replay-bar-labels">
+      <span id="replayBarLeft">0%</span>
+      <span style="color:#6b7280">Anomaly Replay Progress</span>
+      <span id="replayBarRight">–</span>
+    </div>
+    <div class="replay-bar-track">
+      <div class="replay-bar-fill" id="replayBarFill"></div>
+    </div>
+  </div>
+
+  <!-- Live Chart (WebSocket) — bottom section, always visible -->
+  <div class="chart-section">
+    <h2>Live Torque Anomaly Level Monitor (WebSocket)</h2>
+    <canvas id="chart" height="260"></canvas>
+    <div id="status">Starting…</div>
+    <button id="explain-graph-btn">Explain this graph with AI</button>
+  </div>
+
+  <!-- Chatbot -->
+  <button id="chat-toggle">KUKA AI</button>
+  <div id="chatbot" class="hidden">
+    <div id="chat-header">MindTwin AI Assistant</div>
+    <div id="chat-messages"></div>
+    <div id="chat-input-area">
+      <input id="chat-input" placeholder="Ask about anomalies..." />
+      <button id="send-btn">Send</button>
+    </div>
+  </div>
 
   <script>
-    const SLIDE_WINDOW = 30;
-    const JOINTS = 6;
-    const TORQUE_THRESHOLD = 2.0;
+  /* ═══════════════════════════════════════════════════════════════
+     CONSTANTS
+  ═══════════════════════════════════════════════════════════════ */
+  const TORQUE_FEATURES = ['TORQUE_A1','TORQUE_A2','TORQUE_A3','TORQUE_A4','TORQUE_A5','TORQUE_A6'];
+  const AXIS_COLORS = ['#4da6ff','#22c55e','#eab308','#f97316','#ef4444','#a855f7'];
 
-    const ctx = document.getElementById("chart").getContext("2d");
-    const statusDiv = document.getElementById("status");
+  /* ═══════════════════════════════════════════════════════════════
+     STATE
+  ═══════════════════════════════════════════════════════════════ */
+  let liveMode    = true;
+  let replayTimer = null;
+  let liveWs      = null;   // WebSocket for torque readings (bottom chart)
+  let liveWsAnom  = null;   // WebSocket for live anomaly counting
 
-    const JOINT_COLORS = [
-      "#4da6ff", // Joint 1 - blue
-      "#22c55e", // Joint 2 - green
-      "#eab308", // Joint 3 - yellow
-      "#f97316", // Joint 4 - orange
-      "#ef4444", // Joint 5 - red
-      "#a855f7"  // Joint 6 - purple
-    ];
+  // Per-feature counters: { pca, ae, combined }
+  const counts = {};
+  TORQUE_FEATURES.forEach(f => { counts[f] = { pca: 0, ae: 0, combined: 0 }; });
 
-    const datasets = Array.from({ length: JOINTS }, (_, i) => ({
-      label: `Joint ${i + 1}`,
-      data: [],
-      borderColor: JOINT_COLORS[i],
-      backgroundColor: JOINT_COLORS[i],
-      pointBackgroundColor: JOINT_COLORS[i],
-      pointRadius: 3,
-      borderWidth: 2,
-      tension: 0.2
-    }));
+  // Loaded timeline for replay
+  let replayEvents = [];   // sorted array of { secondKey, feature, method:'PCA'|'AE'|'Combined' }
+  let replayIndex  = 0;
 
-    datasets.push({
-      label: "Threshold",
-      data: [],
-      borderDash: [6, 6],
-      borderColor: "red",
-      borderWidth: 2,
-      pointRadius: 0
+  /* ═══════════════════════════════════════════════════════════════
+     HELPER
+  ═══════════════════════════════════════════════════════════════ */
+  function extractSecond(ts) {
+    if (!ts) return null;
+    const m = String(ts).match(/(\d{2}:\d{2}:\d{2})/);
+    return m ? m[1] : null;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     COUNTER CARDS — init & update
+  ═══════════════════════════════════════════════════════════════ */
+  function initCards() {
+    const grid = document.getElementById('counterGrid');
+    grid.innerHTML = TORQUE_FEATURES.map((feat, idx) => {
+      const ax = `A${idx + 1}`;
+      const col = AXIS_COLORS[idx];
+      return `
+        <div class="counter-card" id="card-${feat}">
+          <div class="accent-bar" id="bar-${feat}" style="background:${col};"></div>
+          <div class="axis-label">Axis ${ax}</div>
+          <div class="big-count" id="count-${feat}" style="color:${col}">0</div>
+          <!-- Hidden breakdown elements to avoid JS errors -->
+          <div style="display:none;">
+            <span id="pca-${feat}">0</span>
+            <span id="ae-${feat}">0</span>
+            <span id="comb-${feat}">0</span>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function resetCounts() {
+    TORQUE_FEATURES.forEach(f => {
+      counts[f] = { pca: 0, ae: 0, combined: 0 };
     });
+    updateAllCards();
+  }
 
-    const chart = new Chart(ctx, {
-      type: "line",
-      data: { datasets },
-      options: {
-        animation: false,
-        scales: {
-          x: { type: "linear", title: { display: true, text: "Frame #" } },
-          y: { title: { display: true, text: "Torque Difference" }, suggestedMin: 0, suggestedMax: 1 }
-        },
-        plugins: {
-          legend: { labels: { color: "#ccc" } }
+  function updateAllCards() {
+    TORQUE_FEATURES.forEach(f => updateCard(f));
+    updateStatsBar();
+  }
+
+  function updateCard(feat, flash = '') {
+    const c = counts[feat];
+    const total = c.pca + c.ae + c.combined;   // combined is extra on top
+
+    const el = document.getElementById(`count-${feat}`);
+    const card = document.getElementById(`card-${feat}`);
+    if (!el || !card) return;
+
+    el.textContent = total;
+    document.getElementById(`pca-${feat}`).textContent  = c.pca;
+    document.getElementById(`ae-${feat}`).textContent   = c.ae;
+    document.getElementById(`comb-${feat}`).textContent = c.combined;
+
+    // Color intensity based on count
+    const idx = TORQUE_FEATURES.indexOf(feat);
+    const baseCol = AXIS_COLORS[idx];
+    el.style.color = baseCol;
+
+    // Bump animation
+    card.classList.remove('bumped', 'combined-flash');
+    void card.offsetWidth;  // reflow
+    if (flash === 'combined') {
+      card.classList.add('combined-flash');
+    } else if (flash) {
+      card.classList.add('bumped');
+      setTimeout(() => card.classList.remove('bumped'), 400);
+    }
+  }
+
+  function updateStatsBar() {
+    let totalPca = 0, totalAe = 0, totalComb = 0;
+    TORQUE_FEATURES.forEach(f => {
+      totalPca  += counts[f].pca;
+      totalAe   += counts[f].ae;
+      totalComb += counts[f].combined;
+    });
+    document.getElementById('statPca').textContent  = totalPca;
+    document.getElementById('statAe').textContent   = totalAe;
+    document.getElementById('statComb').textContent = totalComb;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     INCREMENT HELPERS
+     Combined frame: +1 pca +1 ae +1 combined (total shows +3 visually)
+     But user wants: "2sı combined veriyosa 2 yap"
+     → so Combined: pca++ and combined++ (total = pca + ae + combined)
+     → Or simpler: combined means we mark it separately.
+     
+     User said: "2 yap" = when both detect, the combined counter = 2
+     Interpretation: PCA finds 1 + AE finds 1 = 2 for that feature.
+     Combined = the match record. So we show combined separately.
+     Total shown = pca + ae + combined detections.
+  ═══════════════════════════════════════════════════════════════ */
+
+  /**
+   * Increment a feature's counter.
+   * type: 'pca' | 'ae' | 'combined'
+   * Combined adds to pca AND ae AND combined (showing it was caught twice + flagged)
+   */
+  function increment(feat, type) {
+    if (!TORQUE_FEATURES.includes(feat)) return;
+    if (type === 'combined') {
+      counts[feat].pca++;
+      counts[feat].ae++;
+      counts[feat].combined++;
+      updateCard(feat, 'combined');
+    } else {
+      counts[feat][type]++;
+      updateCard(feat, type);
+    }
+    updateStatsBar();
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     DATA LOADING
+  ═══════════════════════════════════════════════════════════════ */
+  let allPcaAnomalies = [];   // { secondKey, feature, score }
+  let allAeAnomalies  = [];   // { secondKey, feature, error }
+  let dataLoaded = false;
+
+  async function loadData() {
+    document.getElementById('statSource').textContent = 'Loading…';
+
+    try {
+      const [pcaRes, aeRes] = await Promise.all([
+        fetch('/api/pca/results',         { cache: 'no-store' }),
+        fetch('/api/autoencoder/results', { cache: 'no-store' })
+      ]);
+
+      const pcaJson = pcaRes.ok ? await pcaRes.json() : {};
+      const aeJson  = aeRes.ok  ? await aeRes.json()  : {};
+
+      // ─── PCA anomalies (per_feature, is_anomaly=true) ──────────────
+      allPcaAnomalies = [];
+      const pcaPerFeature = pcaJson.per_feature || {};
+      for (const [feat, items] of Object.entries(pcaPerFeature)) {
+        if (!TORQUE_FEATURES.includes(feat)) continue;
+        const arr = Array.isArray(items) ? items : [];
+        for (const row of arr) {
+          if (!row.is_anomaly) continue;
+          const ts = row.timestamp || row.time || '';
+          allPcaAnomalies.push({
+            secondKey: extractSecond(ts),
+            feature: row.feature || feat,
+            score: row.pca_score,
+            frame: row.frame_no
+          });
         }
       }
-    });
 
-    // ✅ IMPORTANT:
-    // 8766 is RAW TCP for producer->consumer, NOT a browser WebSocket.
-    // Browser must connect to FastAPI/Uvicorn websocket endpoint.
-    const ws = new WebSocket("ws://127.0.0.1:8000/ws/torque");
-
-    ws.onopen = () => {
-      statusDiv.innerText = "Connected. Waiting for incoming sensor data…";
-      statusDiv.style.color = "#ddd";
-    };
-
-    ws.onerror = () => {
-      statusDiv.innerText = "WebSocket error. Check that backend is running.";
-      statusDiv.style.color = "red";
-    };
-
-    ws.onclose = () => {
-      statusDiv.innerText = "Disconnected. Backend not running / closed.";
-      statusDiv.style.color = "red";
-    };
-
-    ws.onmessage = (event) => {
-      const pkt = JSON.parse(event.data);
-
-      // We expect pkt.diffs: array of length 6, pkt.frame_no, pkt.timestamp, pkt.anomaly (optional)
-      if (Array.isArray(pkt.diffs)) {
-        pkt.diffs.forEach((d, i) => {
-          datasets[i].data.push({ x: pkt.frame_no, y: d });
-          if (datasets[i].data.length > SLIDE_WINDOW) datasets[i].data.shift();
-        });
-
-        // threshold line
-        datasets[JOINTS].data.push({ x: pkt.frame_no, y: TORQUE_THRESHOLD });
-        if (datasets[JOINTS].data.length > SLIDE_WINDOW) datasets[JOINTS].data.shift();
-
-        // sliding x-axis
-        chart.options.scales.x.min = Math.max(pkt.frame_no - SLIDE_WINDOW + 1, 0);
-        chart.options.scales.x.max = pkt.frame_no;
-        chart.update("none");
+      // ─── AE single anomalies (is_anomaly=true) ─────────────────────
+      allAeAnomalies = [];
+      const aeSingle = aeJson.single || {};
+      for (const [feat, items] of Object.entries(aeSingle)) {
+        if (!TORQUE_FEATURES.includes(feat)) continue;
+        const arr = Array.isArray(items) ? items : [];
+        for (const row of arr) {
+          if (!row.is_anomaly) continue;
+          const ts = row.timestamp || row.time || '';
+          allAeAnomalies.push({
+            secondKey: extractSecond(ts),
+            feature: row.feature || feat,
+            error: row.error
+          });
+        }
       }
 
-      // Status text (human readable)
-      const frame = pkt.frame_no ?? "-";
-      const ts = pkt.timestamp
-        ? pkt.timestamp.replace("T"," ").split(".")[0]
-        : new Date().toLocaleTimeString();
-
-      let maxDiff = null, maxJoint = null;
-      if (Array.isArray(pkt.diffs)) {
-        maxDiff = Math.max(...pkt.diffs);
-        maxJoint = pkt.diffs.indexOf(maxDiff) + 1;
+      // ─── Build Combined set (same second + same feature) ───────────
+      const combinedSet = new Set(); // "secondKey|feature"
+      for (const p of allPcaAnomalies) {
+        if (!p.secondKey) continue;
+        for (const a of allAeAnomalies) {
+          if (!a.secondKey) continue;
+          if (p.secondKey === a.secondKey && p.feature === a.feature) {
+            combinedSet.add(`${p.secondKey}|${p.feature}`);
+          }
+        }
       }
 
-      const fmtScore = (v, digits = 4) => (typeof v === "number" ? v.toFixed(digits) : "-");
-      const pcaScore = (typeof pkt.pca_score === "number") ? pkt.pca_score : null;
-      const pcaThr = (typeof pkt.pca_threshold === "number") ? pkt.pca_threshold : null;
-      const pcaAnom = !!pkt.pca_anomaly;
+      // ─── Build replay timeline ──────────────────────────────────────
+      // Each unique event: { sortKey, secondKey, feature, type }
+      const eventsMap = new Map();  // key -> event (deduplicate)
 
-      const ifScore = (typeof pkt.iforest_score === "number") ? pkt.iforest_score : null;
-      const ifThr = (typeof pkt.iforest_threshold === "number") ? pkt.iforest_threshold : null;
-      const ifAnom = !!pkt.iforest_anomaly;
-
-      const modelAnom = !!pkt.model_anomaly || pcaAnom || ifAnom;
-      const modelParts = [];
-      if (pcaScore !== null) {
-        modelParts.push(`PCA ${pcaAnom ? "⚠️" : "OK"} ${fmtScore(pcaScore)} (thr=${fmtScore(pcaThr)})`);
+      for (const p of allPcaAnomalies) {
+        const combKey = `${p.secondKey}|${p.feature}`;
+        const mapKey  = `pca|${combKey}`;
+        if (!eventsMap.has(mapKey)) {
+          eventsMap.set(mapKey, {
+            sortKey: p.secondKey || '',
+            secondKey: p.secondKey,
+            feature: p.feature,
+            type: combinedSet.has(combKey) ? 'combined' : 'pca'
+          });
+        }
       }
-      if (ifScore !== null) {
-        modelParts.push(`IForest ${ifAnom ? "⚠️" : "OK"} ${fmtScore(ifScore)} (thr=${fmtScore(ifThr)})`);
+      for (const a of allAeAnomalies) {
+        const combKey = `${a.secondKey}|${a.feature}`;
+        const mapKey  = `ae|${combKey}`;
+        if (!eventsMap.has(mapKey)) {
+          // If this second+feature is combined, the PCA event already covers it
+          if (!combinedSet.has(combKey)) {
+            eventsMap.set(mapKey, {
+              sortKey: a.secondKey || '',
+              secondKey: a.secondKey,
+              feature: a.feature,
+              type: 'ae'
+            });
+          }
+        }
       }
 
-      const isAnomaly = !!pkt.anomaly || (typeof maxDiff === "number" && maxDiff >= TORQUE_THRESHOLD);
+      replayEvents = [...eventsMap.values()].sort((a, b) =>
+        a.sortKey.localeCompare(b.sortKey)
+      );
 
-      if (typeof maxDiff === "number") {
-        const headline = isAnomaly
-          ? "⚠️ Torque anomaly (threshold)"
-          : (modelAnom ? "⚠️ Torque anomaly (model)" : "Normal");
-        const modelText = modelParts.length ? ` | ${modelParts.join(" | ")}` : "";
-        statusDiv.innerText = `${headline} | Joint ${maxJoint} | Δ=${maxDiff.toFixed(2)} (thr=${TORQUE_THRESHOLD}) | Frame ${frame} | ${ts}${modelText}`;
-        statusDiv.style.color = (isAnomaly || modelAnom) ? "red" : "lightgreen";
+      dataLoaded = true;
+      document.getElementById('statSource').textContent = 'Result Files';
+      document.getElementById('statSource').className  = 'val green';
+
+      const combCount = combinedSet.size;
+      document.getElementById('statPca').textContent  = allPcaAnomalies.length;
+      document.getElementById('statAe').textContent   = allAeAnomalies.length;
+      document.getElementById('statComb').textContent = combCount;
+      document.getElementById('statFrame').textContent = `0 / ${replayEvents.length}`;
+
+      if (!liveMode) {
+        // Auto-start replay in static mode
+        startReplay();
+      }
+
+    } catch (err) {
+      console.error('[torque] Data load error:', err);
+      document.getElementById('statSource').textContent = 'Error';
+      document.getElementById('statSource').className  = 'val red';
+    }
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     REPLAY (static mode)
+  ═══════════════════════════════════════════════════════════════ */
+  const REPLAY_INTERVAL_MS = 120;  // ms per event step
+
+  function startReplay() {
+    stopReplay();
+    resetCounts();
+    replayIndex = 0;
+
+    // Reset chart for replay
+    chartDatasets.forEach(ds => ds.data = []);
+    if (window.liveChart) {
+      liveChart.update('none');
+    }
+
+    if (!dataLoaded || !replayEvents.length) return;
+
+    document.getElementById('replayBarWrap').style.display = 'block';
+    document.getElementById('replayBtn').disabled = true;
+
+    replayTimer = setInterval(() => {
+      if (replayIndex >= replayEvents.length) {
+        stopReplay();
+        return;
+      }
+
+      const ev = replayEvents[replayIndex];
+      replayIndex++;
+
+      // Increment counter
+      increment(ev.feature, ev.type);
+
+      // Update chart with anomaly values during replay
+      TORQUE_FEATURES.forEach((f, i) => {
+        let val = 0;
+        if (f === ev.feature) {
+          if (ev.type === 'combined') val = 2;
+          else if (ev.type === 'pca' || ev.type === 'ae') val = 1;
+        }
+        chartDatasets[i].data.push({ x: replayIndex, y: val });
+        if (chartDatasets[i].data.length > SLIDE_WINDOW) chartDatasets[i].data.shift();
+      });
+      if (window.liveChart) {
+        liveChart.options.scales.x.min = Math.max(replayIndex - SLIDE_WINDOW + 1, 0);
+        liveChart.options.scales.x.max = replayIndex;
+        liveChart.update('none');
+      }
+
+      // Update progress bar and frame counter
+      const pct = Math.round((replayIndex / replayEvents.length) * 100);
+      document.getElementById('replayBarFill').style.width = pct + '%';
+      document.getElementById('replayBarLeft').textContent = pct + '%';
+      document.getElementById('replayBarRight').textContent = ev.secondKey || '';
+      document.getElementById('statFrame').textContent = `${replayIndex} / ${replayEvents.length}`;
+
+    }, REPLAY_INTERVAL_MS);
+  }
+
+  function stopReplay() {
+    if (replayTimer) { clearInterval(replayTimer); replayTimer = null; }
+    document.getElementById('replayBtn').disabled = false;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     LIVE MODE — WebSocket-based anomaly counting
+  ═══════════════════════════════════════════════════════════════ */
+
+  // Track recent secondKey+feature combos to detect combined in real time
+  // Keep a window of last N seconds
+  const recentPca = new Map();   // secondKey+feature -> timestamp
+  const recentAe  = new Map();
+
+  function liveIncrement(feat, method, secondKey) {
+    if (!TORQUE_FEATURES.includes(feat)) return;
+    const combKey = `${secondKey}|${feat}`;
+
+    if (method === 'pca') {
+      recentPca.set(combKey, Date.now());
+      if (recentAe.has(combKey)) {
+        // Both detected same second+feature: combined!
+        increment(feat, 'combined');
+        recentAe.delete(combKey);
+        recentPca.delete(combKey);
       } else {
-        const modelText = modelParts.length ? ` | ${modelParts.join(" | ")}` : "";
-        statusDiv.innerText = `Data received | Frame ${frame} | ${ts}${modelText}`;
-        statusDiv.style.color = modelAnom ? "red" : "#ddd";
+        increment(feat, 'pca');
       }
-    };
+    } else if (method === 'ae') {
+      recentAe.set(combKey, Date.now());
+      if (recentPca.has(combKey)) {
+        increment(feat, 'combined');
+        recentPca.delete(combKey);
+        recentAe.delete(combKey);
+      } else {
+        increment(feat, 'ae');
+      }
+    }
+
+    // Clean up stale entries (> 5 seconds old)
+    const cutoff = Date.now() - 5000;
+    for (const [k, t] of recentPca) { if (t < cutoff) recentPca.delete(k); }
+    for (const [k, t] of recentAe)  { if (t < cutoff) recentAe.delete(k);  }
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     MODE CONTROL
+  ═══════════════════════════════════════════════════════════════ */
+  function setLiveMode(on) {
+    liveMode = on;
+    localStorage.setItem('mindtwin_live_mode', on);
+    document.getElementById('liveIndicator').classList.toggle('on', on);
+    document.getElementById('replayBarWrap').style.display = on ? 'none' : 'block';
+
+    if (on) {
+      stopReplay();
+      resetCounts();
+      document.getElementById('statSource').textContent = 'Live WebSocket';
+      document.getElementById('statSource').className  = 'val green';
+      document.getElementById('statPca').textContent   = '–';
+      document.getElementById('statAe').textContent    = '–';
+      document.getElementById('statComb').textContent  = '–';
+      document.getElementById('statFrame').textContent = 'Live';
+    } else {
+      if (dataLoaded) {
+        startReplay();
+      } else {
+        loadData();
+      }
+    }
+  }
+
+  document.getElementById('liveModeToggle').addEventListener('change', function() {
+    setLiveMode(this.checked);
+  });
+
+  /* ═══════════════════════════════════════════════════════════════
+     BOTTOM: WebSocket Live Chart (real-time torque values)
+     — identical to original, no changes
+  ═══════════════════════════════════════════════════════════════ */
+  const SLIDE_WINDOW = 30;
+  const JOINTS       = 6;
+
+  const ctx       = document.getElementById('chart').getContext('2d');
+  const statusDiv = document.getElementById('status');
+
+  const JOINT_COLORS = ['#4da6ff','#22c55e','#eab308','#f97316','#ef4444','#a855f7'];
+
+  const chartDatasets = Array.from({ length: JOINTS }, (_, i) => ({
+    label: `A${i + 1}`,
+    data: [],
+    borderColor: JOINT_COLORS[i],
+    backgroundColor: JOINT_COLORS[i],
+    pointBackgroundColor: JOINT_COLORS[i],
+    pointRadius: 3,
+    borderWidth: 2,
+    tension: 0.2
+  }));
+
+  const liveChart = new Chart(ctx, {
+    type: 'line',
+    data: { datasets: chartDatasets },
+    options: {
+      animation: false,
+      scales: {
+        x: {
+          type: 'linear',
+          title: { display: true, text: 'Frame #', color: '#888' },
+          ticks: { color: '#666' },
+          grid: { color: 'rgba(255,255,255,0.05)' }
+        },
+        y: {
+          title: { display: true, text: 'Anomaly Level (0: None, 1: Single, 2: Combined)', color: '#888' },
+          min: 0,
+          max: 2,
+          ticks: {
+            color: '#666',
+            stepSize: 1,
+            callback: function(value) {
+              if (value === 0) return '0 (None)';
+              if (value === 1) return '1 (Single)';
+              if (value === 2) return '2 (Combined)';
+              return value;
+            }
+          },
+          grid: { color: 'rgba(255,255,255,0.05)' }
+        }
+      },
+      plugins: { legend: { labels: { color: '#ccc' } } }
+    }
+  });
+
+  const ws = new WebSocket('ws://127.0.0.1:8000/ws/torque');
+
+  ws.onopen  = () => { statusDiv.innerText = 'Connected. Waiting for sensor data…'; statusDiv.style.color = '#ddd'; };
+  ws.onerror = () => { statusDiv.innerText = 'WebSocket error. Backend not running.'; statusDiv.style.color = 'red'; };
+  ws.onclose = () => { statusDiv.innerText = 'Disconnected. Backend not running / closed.'; statusDiv.style.color = 'red'; };
+
+  ws.onmessage = (event) => {
+    const pkt = JSON.parse(event.data);
+    const torqueValues = Array.isArray(pkt.torque_actual) ? pkt.torque_actual
+                       : Array.isArray(pkt.diffs)         ? pkt.diffs
+                       : null;
+
+    if (torqueValues) {
+      torqueValues.forEach((v, i) => {
+        const feat = TORQUE_FEATURES[i];
+        
+        // Detect PCA anomaly for this feature
+        let pcaHasAnomaly = false;
+        if (pkt.pca_anomaly && pkt.diffs) {
+          const worstIdx = pkt.diffs.indexOf(Math.max(...pkt.diffs));
+          if (worstIdx === i) {
+            pcaHasAnomaly = true;
+          }
+        }
+        
+        // Detect AE anomaly for this feature
+        let aeHasAnomaly = false;
+        if (pkt.ae_anomaly && pkt.ae_root_cause) {
+          if (pkt.ae_root_cause === feat) {
+            aeHasAnomaly = true;
+          }
+        }
+        
+        // Calculate anomaly value (0, 1, or 2)
+        let anomalyVal = 0;
+        if (pcaHasAnomaly && aeHasAnomaly) {
+          anomalyVal = 2;
+        } else if (pcaHasAnomaly || aeHasAnomaly) {
+          anomalyVal = 1;
+        }
+
+        chartDatasets[i].data.push({ x: pkt.frame_no, y: anomalyVal });
+        if (chartDatasets[i].data.length > SLIDE_WINDOW) chartDatasets[i].data.shift();
+      });
+      liveChart.options.scales.x.min = Math.max(pkt.frame_no - SLIDE_WINDOW + 1, 0);
+      liveChart.options.scales.x.max = pkt.frame_no;
+      liveChart.update('none');
+    }
+
+    const frame = pkt.frame_no ?? '-';
+    const ts    = pkt.timestamp ? pkt.timestamp.replace('T',' ').split('.')[0] : new Date().toLocaleTimeString();
+    const jointLines = torqueValues ? torqueValues.map((v, i) => `A${i+1}: ${v.toFixed(3)}`).join('  ') : '';
+
+    statusDiv.innerHTML =
+      `<b style="font-size:1rem;color:#4da6ff;">Real-time Readings</b><br>` +
+      `<span style="font-family:monospace;font-size:0.88rem">${jointLines}</span><br>` +
+      `<span style="opacity:0.5;font-size:0.8rem">Frame ${frame} | ${ts}</span>`;
+    statusDiv.style.color = '#eee';
+    statusDiv.style.borderColor = 'rgba(255,255,255,0.08)';
+
+    // ── Live anomaly counting from WebSocket ──────────────────────
+    if (liveMode) {
+      const second = ts.split(' ')[1] || '';  // HH:mm:ss from "YYYY-MM-DD HH:mm:ss"
+
+      // PCA anomaly
+      if (pkt.pca_anomaly && pkt.diffs) {
+        const worstIdx = pkt.diffs.indexOf(Math.max(...pkt.diffs));
+        const feat = `TORQUE_A${worstIdx + 1}`;
+        liveIncrement(feat, 'pca', second);
+      }
+
+      // AE anomaly
+      if (pkt.ae_anomaly && pkt.ae_root_cause) {
+        const feat = pkt.ae_root_cause;  // e.g. "TORQUE_A2"
+        liveIncrement(feat, 'ae', second);
+      }
+
+      // Update live frame counter
+      document.getElementById('statFrame').textContent = `Frame ${frame}`;
+    }
+  };
+
+  /* ═══════════════════════════════════════════════════════════════
+     CHATBOT
+  ═══════════════════════════════════════════════════════════════ */
+  const chatToggle = document.getElementById('chat-toggle');
+  const chatbot    = document.getElementById('chatbot');
+  chatToggle.onclick = () => chatbot.classList.toggle('hidden');
+
+  const chatMessages = document.getElementById('chat-messages');
+  const chatInput    = document.getElementById('chat-input');
+  const sendBtn      = document.getElementById('send-btn');
+
+  async function sendMessage() {
+    const message = chatInput.value.trim();
+    if (!message) return;
+    chatMessages.innerHTML += `<div class="msg-user"><b>You:</b> ${message}</div>`;
+    chatInput.value = '';
+    try {
+      const res  = await fetch('/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({message}) });
+      const data = await res.json();
+      chatMessages.innerHTML += `<div class="msg-ai"><b>AI:</b> ${data.reply}</div>`;
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    } catch {
+      chatMessages.innerHTML += `<div class="msg-ai"><b>AI:</b> Backend connection error.</div>`;
+    }
+  }
+  sendBtn.onclick = sendMessage;
+  chatInput.addEventListener('keypress', e => { if (e.key === 'Enter') sendMessage(); });
+
+  const explainGraphBtn = document.getElementById('explain-graph-btn');
+  explainGraphBtn.onclick = async () => {
+    chatInput.value = "Explain this torque graph. Mention trend, risky joint, anomaly status, and maintenance action.";
+    chatbot.classList.remove('hidden');
+    await sendMessage();
+  };
+
+  /* ═══════════════════════════════════════════════════════════════
+     INIT
+  ═══════════════════════════════════════════════════════════════ */
+  initCards();
+
+  const savedLive = localStorage.getItem('mindtwin_live_mode');
+  if (savedLive !== null) {
+    liveMode = savedLive === 'true';
+    document.getElementById('liveModeToggle').checked = liveMode;
+  }
+
+  document.getElementById('liveIndicator').classList.toggle('on', liveMode);
+
+  if (!liveMode) {
+    // Static mode: load data and start replay
+    loadData();
+  } else {
+    document.getElementById('statSource').textContent = 'Live WebSocket';
+    document.getElementById('statSource').className  = 'val green';
+    document.getElementById('statFrame').textContent = 'Live';
+    // Pre-load data in background for quick switch to static
+    loadData();
+  }
   </script>
+
 </body>
 </html>

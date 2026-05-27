@@ -1,12 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <title>Thermal Monitor</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <style>
-    html, body {
+    html,
+    body {
       background: #111 !important;
       color: #eee !important;
       margin: 0;
@@ -51,8 +53,8 @@
       letter-spacing: 0.2px;
       padding: 0.75rem 1rem;
       border-radius: 12px;
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.08);
       display: inline-block;
       min-width: 420px;
     }
@@ -63,17 +65,25 @@
       align-items: center;
       gap: 10px;
     }
-    .controls label { font-weight: 700; }
+
+    .controls label {
+      font-weight: 700;
+    }
+
     .controls input {
       width: 90px;
       padding: 6px 8px;
       border-radius: 8px;
-      border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.06);
       color: #eee;
       outline: none;
     }
-    .hint { opacity: 0.75; font-size: 13px; }
+
+    .hint {
+      opacity: 0.75;
+      font-size: 13px;
+    }
   </style>
 </head>
 
@@ -84,6 +94,8 @@
     <a href="/thermal">Thermal</a>
     <a href="/torque">Torque</a>
     <a href="/events">Events</a>
+    <a href="/autoencoder">Autoencoder</a>
+    <a href="/pca">PCA</a>
   </nav>
 
   <h1>Thermal Monitor</h1>
@@ -120,7 +132,7 @@
         if (j && typeof j.thermal_threshold_c === "number") {
           thrInput.value = j.thermal_threshold_c;
         }
-      } catch (e) {}
+      } catch (e) { }
     }
 
     let saveTimer = null;
@@ -134,7 +146,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ thermal_threshold_c: val })
           });
-        } catch (e) {}
+        } catch (e) { }
       }, 250);
     }
 
@@ -144,17 +156,17 @@
     const statusDiv = document.getElementById("status");
 
     const COLORS = {
-      min:   "#4da6ff",
-      mean:  "#22c55e",
-      max:   "#ef4444",
-      thr:   "red"
+      min: "#4da6ff",
+      mean: "#22c55e",
+      max: "#ef4444",
+      thr: "red"
     };
 
     const datasets = [
-      { label: "T_min (°C)",  data: [], borderColor: COLORS.min,  backgroundColor: COLORS.min,  pointBackgroundColor: COLORS.min,  pointRadius: 3, borderWidth: 2, tension: 0.2 },
+      { label: "T_min (°C)", data: [], borderColor: COLORS.min, backgroundColor: COLORS.min, pointBackgroundColor: COLORS.min, pointRadius: 3, borderWidth: 2, tension: 0.2 },
       { label: "T_mean (°C)", data: [], borderColor: COLORS.mean, backgroundColor: COLORS.mean, pointBackgroundColor: COLORS.mean, pointRadius: 3, borderWidth: 2, tension: 0.2 },
-      { label: "T_max (°C)",  data: [], borderColor: COLORS.max,  backgroundColor: COLORS.max,  pointBackgroundColor: COLORS.max,  pointRadius: 3, borderWidth: 2, tension: 0.2 },
-      { label: "Threshold (°C)", data: [], borderDash: [6,6], borderColor: COLORS.thr, borderWidth: 2, pointRadius: 0 }
+      { label: "T_max (°C)", data: [], borderColor: COLORS.max, backgroundColor: COLORS.max, pointBackgroundColor: COLORS.max, pointRadius: 3, borderWidth: 2, tension: 0.2 },
+      { label: "Threshold (°C)", data: [], borderDash: [6, 6], borderColor: COLORS.thr, borderWidth: 2, pointRadius: 0 }
     ];
 
     const chart = new Chart(ctx, {
@@ -193,7 +205,7 @@
 
       const frame = pkt.frame_no ?? "-";
       const ts = pkt.timestamp
-        ? pkt.timestamp.replace("T"," ").split(".")[0]
+        ? pkt.timestamp.replace("T", " ").split(".")[0]
         : new Date().toLocaleTimeString();
 
       const tmin = toCelsius(Number(pkt.t_min));
@@ -232,5 +244,164 @@
     // sayfa açılınca backend'deki kaydedilmiş threshold'u çek
     loadThresholdFromBackend();
   </script>
+  <button id="chat-toggle">KUKA AI</button>
+
+  <div id="chatbot" class="hidden">
+    <div id="chat-header">
+      MindTwin AI Assistant
+    </div>
+
+    <div id="chat-messages"></div>
+
+    <div id="chat-input-area">
+      <input id="chat-input" placeholder="Ask about anomalies..." />
+      <button id="send-btn">Send</button>
+    </div>
+  </div>
+
+  <style>
+    #chat-toggle {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      border: none;
+      background: #911212;
+      color: white;
+      font-size: 1.1rem;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+      z-index: 9999;
+    }
+
+    #chatbot {
+      position: fixed;
+      right: 20px;
+      bottom: 100px;
+      width: 340px;
+      height: 420px;
+      background: #181818;
+      border: 1px solid #333;
+      border-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+      z-index: 9999;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    #chat-header {
+      padding: 1rem;
+      background: #911212;
+      font-weight: bold;
+    }
+
+    #chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      font-size: 0.95rem;
+    }
+
+    .msg-user {
+      margin-bottom: 1rem;
+      color: #7dd3fc;
+    }
+
+    .msg-ai {
+      margin-bottom: 1rem;
+      color: #c4f5c4;
+    }
+
+    #chat-input-area {
+      display: flex;
+      border-top: 1px solid #333;
+    }
+
+    #chat-input {
+      flex: 1;
+      background: #111;
+      border: none;
+      color: white;
+      padding: 1rem;
+      outline: none;
+    }
+
+    #send-btn {
+      background: #911212;
+      color: white;
+      border: none;
+      padding: 1rem;
+      cursor: pointer;
+    }
+  </style>
+
+  <script>
+    const chatToggle = document.getElementById("chat-toggle");
+    const chatbot = document.getElementById("chatbot");
+
+    chatToggle.onclick = () => {
+      chatbot.classList.toggle("hidden");
+    };
+
+    const chatMessages = document.getElementById("chat-messages");
+    const chatInput = document.getElementById("chat-input");
+    const sendBtn = document.getElementById("send-btn");
+
+    async function sendMessage() {
+      const message = chatInput.value.trim();
+
+      if (!message) return;
+
+      chatMessages.innerHTML += `
+      <div class="msg-user">
+        <b>You:</b> ${message}
+      </div>
+    `;
+
+      chatInput.value = "";
+
+      try {
+        const res = await fetch("/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ message })
+        });
+
+        const data = await res.json();
+
+        chatMessages.innerHTML += `
+        <div class="msg-ai">
+          <b>AI:</b> ${data.reply}
+        </div>
+      `;
+
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+
+      } catch (err) {
+        chatMessages.innerHTML += `
+        <div class="msg-ai">
+          <b>AI:</b> Backend connection error.
+        </div>
+      `;
+      }
+    }
+
+    sendBtn.onclick = sendMessage;
+
+    chatInput.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") sendMessage();
+    });
+  </script>
 </body>
+
 </html>

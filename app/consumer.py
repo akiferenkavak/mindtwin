@@ -925,6 +925,7 @@ class ChatRequest(BaseModel):
 @app.post("/chat")
 async def chat(req: ChatRequest):
 
+<<<<<<< HEAD
     thermal_data = latest_frame if latest_frame else {}
     torque_data = latest_torque if latest_torque else {}
     recent_events = error_log[-20:]
@@ -1009,11 +1010,76 @@ ANSWER RULES:
 - Avoid phrases like "Based on the data", "Overall status", and "The robot's health".
 
 USER QUESTION:
+=======
+    thermal_data   = latest_frame  if latest_frame  else {}
+    torque_data    = latest_torque if latest_torque else {}
+    recent_events  = error_log[-20:]
+
+    # Autoencoder summary: sadece GERÇEK anomalileri al (is_anomaly == True)
+    all_multiple = KB_AUTOENCODER.get("multiple", [])
+    real_anomalies = [a for a in all_multiple if a.get("is_anomaly") == True]
+    
+    # En yüksek error'a sahip 5 tanesini sırala
+    real_anomalies = sorted(real_anomalies, key=lambda x: x.get("error", 0), reverse=True)[:5]
+    
+    ae_meta = KB_AUTOENCODER.get("meta", {})
+
+    prompt = f"""
+You are MindTwin AI — a specialized industrial AI assistant embedded in a KUKA robotic arm
+digital-twin monitoring dashboard. You ONLY answer questions related to:
+  • KUKA robot arm health monitoring
+  • Thermal anomalies (motor temperatures)
+  • Torque anomalies (joint torques A1-A6)
+  • PCA / Isolation Forest / Autoencoder anomaly detection results
+  • Maintenance recommendations based on sensor data
+
+If the user asks ANYTHING unrelated to these topics (e.g. general knowledge, coding,
+personal questions, weather, etc.), respond EXACTLY with:
+  "Ben bir KUKA robot izleme chatbotuyum. Sadece robot sağlığı, anomali tespiti ve bakım
+   konularında yardımcı olabilirim."
+
+── KNOWLEDGE BASE (JSON dosyalarından yüklendi) ──────────────────────────────
+
+[1] EVAL REPORT (PCA + IForest model metrikleri):
+{json.dumps(KB_EVAL_REPORT, indent=2)}
+
+[2] PCA EŞİK DEĞERLERİ:
+{json.dumps(KB_PCA_THRESHOLDS, indent=2)}
+
+[3] ISOLATION FOREST EŞİK DEĞERLERİ:
+{json.dumps(KB_IFOREST_THR, indent=2)}
+
+[4] AUTOENCODER SONUÇLARI (En yüksek 5 anomali):
+Meta: {json.dumps(ae_meta)}
+Tespit Edilen Anomaliler: {json.dumps(real_anomalies, indent=2)}
+
+── CANLI VERİ ────────────────────────────────────────────────────────────────
+
+[5] Anlık thermal verisi:
+{json.dumps(thermal_data, indent=2)}
+
+[6] Anlık torque verisi:
+{json.dumps(torque_data, indent=2)}
+
+[7] Son 20 anomali eventi:
+{json.dumps(recent_events, indent=2)}
+
+── CEVAP KURALLARI ───────────────────────────────────────────────────────────
+- Kısa ve teknik ol. Dashboard operatörüne konuşur gibi.
+- Markdown, başlık, madde imi kullanma.
+- Çoğu cevabı 2 cümleyle bitir.
+- Anomali yoksa "sistem normal" de.
+- Veri yoksa "canlı veri bekleniyor" de, tahmin yürütme.
+- "Based on the data", "Overall status", "The robot's health" gibi ifadeler kullanma.
+
+── KULLANICI SORUSU ──────────────────────────────────────────────────────────
+>>>>>>> e2615806bb5a37da1f94bb5be057a2d63f8b0f4f
 {req.message}
 """
 
     try:
         response = gemini_model.generate_content(prompt)
+<<<<<<< HEAD
 
         return {
             "reply": response.text if response.text else "No AI response generated."
@@ -1030,6 +1096,21 @@ USER QUESTION:
 class ThermalSettingsIn(BaseModel):
     thermal_threshold_c: float
 
+=======
+        return {"reply": response.text if response.text else "No AI response generated."}
+
+    except Exception as e:
+        print("CHAT ERROR:", e)
+        return {"reply": f"Gemini API hatası: {str(e)}"}
+
+
+
+# ---- SETTINGS API (kalıcı threshold) ----
+class ThermalSettingsIn(BaseModel):
+    thermal_threshold_c: float
+
+
+>>>>>>> e2615806bb5a37da1f94bb5be057a2d63f8b0f4f
 @app.get("/settings/thermal")
 def get_thermal_settings():
     with _settings_lock:

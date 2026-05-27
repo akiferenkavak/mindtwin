@@ -895,21 +895,24 @@ def get_latest():
 @app.get("/errors")
 def get_errors():
     return error_log[-200:]
+
+
 class ChatRequest(BaseModel):
     message: str
+
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
 
-<<<<<<< HEAD
     thermal_data = latest_frame if latest_frame else {}
     torque_data = latest_torque if latest_torque else {}
     recent_events = error_log[-20:]
 
     all_multiple = KB_AUTOENCODER.get("multiple", [])
+
     real_anomalies = [
         a for a in all_multiple
-        if a.get("is_anomaly") == True
+        if a.get("is_anomaly") is True
     ]
 
     real_anomalies = sorted(
@@ -923,20 +926,21 @@ async def chat(req: ChatRequest):
     prompt = f"""
 You are MindTwin AI, a specialized industrial monitoring assistant for a KUKA robotic arm digital-twin dashboard.
 
-CRITICAL LANGUAGE RULE:
+CRITICAL LANGUAGE RULES:
 - ALWAYS answer in English only.
 - NEVER answer in Turkish.
-- Even if logs, events, prompts, anomaly labels, or user messages contain Turkish, translate everything to English before replying.
+- Translate Turkish anomaly labels into English before replying.
 
 You ONLY answer questions related to:
-- KUKA robot arm health monitoring
-- Thermal anomalies and motor temperature behavior
-- Torque anomalies for joints A1-A6
-- PCA anomaly detection results
-- Isolation Forest anomaly detection results
-- Autoencoder anomaly detection results
-- Graph trend interpretation
-- Predictive maintenance recommendations
+- KUKA robot arm monitoring
+- Thermal anomalies
+- Torque anomalies
+- PCA anomaly detection
+- Isolation Forest anomaly detection
+- Autoencoder anomaly detection
+- Predictive maintenance
+- Industrial monitoring
+- Graph trend analysis
 
 If the user asks anything unrelated, respond EXACTLY with:
 "I am a KUKA robot monitoring assistant. I can only help with robot health, anomaly detection, and maintenance."
@@ -949,113 +953,47 @@ EVAL REPORT:
 PCA THRESHOLDS:
 {json.dumps(KB_PCA_THRESHOLDS, indent=2)}
 
-ISOLATION FOREST THRESHOLDS:
+IFOREST THRESHOLDS:
 {json.dumps(KB_IFOREST_THR, indent=2)}
 
-AUTOENCODER SUMMARY:
-Meta: {json.dumps(ae_meta)}
-Top detected anomalies:
+AUTOENCODER META:
+{json.dumps(ae_meta, indent=2)}
+
+TOP AUTOENCODER ANOMALIES:
 {json.dumps(real_anomalies, indent=2)}
 
 LIVE DATA:
 
-Latest thermal data:
+THERMAL DATA:
 {json.dumps(thermal_data, indent=2)}
 
-Latest torque data:
+TORQUE DATA:
 {json.dumps(torque_data, indent=2)}
 
-Recent anomaly events:
+RECENT EVENTS:
 {json.dumps(recent_events, indent=2)}
 
 ANSWER RULES:
-- Always answer in English.
-- Be short, technical, and direct.
+- Keep responses short and technical.
+- Maximum 2 sentences unless the user asks for detail.
 - Sound like an industrial monitoring dashboard.
-- Most answers must be 1-2 sentences.
-- Do not use markdown headings.
-- Do not hallucinate missing sensor values.
-- Use only the provided live data and knowledge base.
-- If live data is missing, say: "Live data is still being collected."
-- If there is no anomaly, say the robot is operating normally.
-- If anomalies exist, mention the affected signal, joint, model, severity, and possible cause.
-- For graph-analysis questions, explain visible trends, spikes, instability, repeated deviations, and maintenance risk.
-- Give maintenance actions only when useful.
-- Keep recommendations short and actionable.
-- Prefer verbs like: Check, Inspect, Monitor, Reduce load, Verify cooling, Review joint friction.
-- Avoid phrases like "Based on the data", "Overall status", and "The robot's health".
+- Do not hallucinate values.
+- Use only provided data.
+- If there is no anomaly, say the system is operating normally.
+- Mention affected joints when anomalies exist.
+- Give short actionable maintenance advice if needed.
+- Prefer phrases like:
+  "Inspect joint friction"
+  "Monitor thermal increase"
+  "Check cooling system"
+  "Reduce mechanical load"
 
 USER QUESTION:
-=======
-    thermal_data   = latest_frame  if latest_frame  else {}
-    torque_data    = latest_torque if latest_torque else {}
-    recent_events  = error_log[-20:]
-
-    # Autoencoder summary: sadece GERÇEK anomalileri al (is_anomaly == True)
-    all_multiple = KB_AUTOENCODER.get("multiple", [])
-    real_anomalies = [a for a in all_multiple if a.get("is_anomaly") == True]
-    
-    # En yüksek error'a sahip 5 tanesini sırala
-    real_anomalies = sorted(real_anomalies, key=lambda x: x.get("error", 0), reverse=True)[:5]
-    
-    ae_meta = KB_AUTOENCODER.get("meta", {})
-
-    prompt = f"""
-You are MindTwin AI — a specialized industrial AI assistant embedded in a KUKA robotic arm
-digital-twin monitoring dashboard. You ONLY answer questions related to:
-  • KUKA robot arm health monitoring
-  • Thermal anomalies (motor temperatures)
-  • Torque anomalies (joint torques A1-A6)
-  • PCA / Isolation Forest / Autoencoder anomaly detection results
-  • Maintenance recommendations based on sensor data
-
-If the user asks ANYTHING unrelated to these topics (e.g. general knowledge, coding,
-personal questions, weather, etc.), respond EXACTLY with:
-  "Ben bir KUKA robot izleme chatbotuyum. Sadece robot sağlığı, anomali tespiti ve bakım
-   konularında yardımcı olabilirim."
-
-── KNOWLEDGE BASE (JSON dosyalarından yüklendi) ──────────────────────────────
-
-[1] EVAL REPORT (PCA + IForest model metrikleri):
-{json.dumps(KB_EVAL_REPORT, indent=2)}
-
-[2] PCA EŞİK DEĞERLERİ:
-{json.dumps(KB_PCA_THRESHOLDS, indent=2)}
-
-[3] ISOLATION FOREST EŞİK DEĞERLERİ:
-{json.dumps(KB_IFOREST_THR, indent=2)}
-
-[4] AUTOENCODER SONUÇLARI (En yüksek 5 anomali):
-Meta: {json.dumps(ae_meta)}
-Tespit Edilen Anomaliler: {json.dumps(real_anomalies, indent=2)}
-
-── CANLI VERİ ────────────────────────────────────────────────────────────────
-
-[5] Anlık thermal verisi:
-{json.dumps(thermal_data, indent=2)}
-
-[6] Anlık torque verisi:
-{json.dumps(torque_data, indent=2)}
-
-[7] Son 20 anomali eventi:
-{json.dumps(recent_events, indent=2)}
-
-── CEVAP KURALLARI ───────────────────────────────────────────────────────────
-- Kısa ve teknik ol. Dashboard operatörüne konuşur gibi.
-- Markdown, başlık, madde imi kullanma.
-- Çoğu cevabı 2 cümleyle bitir.
-- Anomali yoksa "sistem normal" de.
-- Veri yoksa "canlı veri bekleniyor" de, tahmin yürütme.
-- "Based on the data", "Overall status", "The robot's health" gibi ifadeler kullanma.
-
-── KULLANICI SORUSU ──────────────────────────────────────────────────────────
->>>>>>> e2615806bb5a37da1f94bb5be057a2d63f8b0f4f
 {req.message}
 """
 
     try:
         response = gemini_model.generate_content(prompt)
-<<<<<<< HEAD
 
         return {
             "reply": response.text if response.text else "No AI response generated."
@@ -1068,49 +1006,45 @@ Tespit Edilen Anomaliler: {json.dumps(real_anomalies, indent=2)}
             "reply": f"Gemini API error: {str(e)}"
         }
 
+
 # ---- SETTINGS API ----
 class ThermalSettingsIn(BaseModel):
     thermal_threshold_c: float
 
-=======
-        return {"reply": response.text if response.text else "No AI response generated."}
 
-    except Exception as e:
-        print("CHAT ERROR:", e)
-        return {"reply": f"Gemini API hatası: {str(e)}"}
-
-
-
-# ---- SETTINGS API (kalıcı threshold) ----
-class ThermalSettingsIn(BaseModel):
-    thermal_threshold_c: float
-
-
->>>>>>> e2615806bb5a37da1f94bb5be057a2d63f8b0f4f
 @app.get("/settings/thermal")
 def get_thermal_settings():
     with _settings_lock:
-        return {"thermal_threshold_c": float(settings["thermal_threshold_c"])}
+        return {
+            "thermal_threshold_c": float(settings["thermal_threshold_c"])
+        }
 
 
 @app.post("/settings/thermal")
 def set_thermal_settings(payload: ThermalSettingsIn):
     with _settings_lock:
         settings["thermal_threshold_c"] = float(payload.thermal_threshold_c)
+
     save_settings()
-    return {"ok": True, "thermal_threshold_c": float(payload.thermal_threshold_c)}
+
+    return {
+        "ok": True,
+        "thermal_threshold_c": float(payload.thermal_threshold_c)
+    }
 
 
 @app.websocket("/ws")
 async def websocket_thermal(ws: WebSocket):
     await ws.accept()
     global latest_frame
+
     while True:
         if latest_frame is not None:
             try:
                 await ws.send_json(latest_frame)
             except Exception as e:
                 print("WebSocket thermal send error:", e)
+
         await asyncio.sleep(0.5)
 
 
@@ -1118,12 +1052,14 @@ async def websocket_thermal(ws: WebSocket):
 async def websocket_torque(ws: WebSocket):
     await ws.accept()
     global latest_torque
+
     while True:
         if latest_torque is not None:
             try:
                 await ws.send_json(latest_torque)
             except Exception as e:
                 print("WebSocket torque send error:", e)
+
         await asyncio.sleep(0.5)
 
 

@@ -591,8 +591,6 @@ function renderLiveEvents(data) {
   let criticalCount = 0;
 
   data.slice().reverse().forEach(e => {
-    if (e.severity === 'INFO') return;
-
     if (allowedTypes && !allowedTypes.includes(e.type)) return;
 
     if (timeFilter === '5' && e.timestamp) {
@@ -613,6 +611,8 @@ function renderLiveEvents(data) {
       sevBadge = `<span style="background:#dc2626;color:white;padding:2px 6px;border-radius:4px;font-size:0.75rem;font-weight:bold;margin-left:0.5rem;display:inline-block;vertical-align:middle;">CRITICAL</span>`;
     } else if (e.severity === 'WARNING') {
       sevBadge = `<span style="background:#d97706;color:white;padding:2px 6px;border-radius:4px;font-size:0.75rem;font-weight:bold;margin-left:0.5rem;display:inline-block;vertical-align:middle;">WARNING</span>`;
+    } else if (e.severity === 'INFO') {
+      sevBadge = `<span style="background:#2563eb;color:white;padding:2px 6px;border-radius:4px;font-size:0.75rem;font-weight:bold;margin-left:0.5rem;display:inline-block;vertical-align:middle;">INFO</span>`;
     }
 
     let typeChip = `<span class="chip live-chip">${e.type}</span>`;
@@ -858,7 +858,6 @@ async function loadStaticResults() {
 ═══════════════════════════════════════════════════════════════════ */
 
 let seenEventsStr = new Set();
-let isFirstLivePoll = false;
 
 async function fetchEvents() {
   try {
@@ -866,18 +865,8 @@ async function fetchEvents() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
 
-    if (isFirstLivePoll) {
-      localStorage.setItem('mindtwin_live_start_index', data.length);
-      data.forEach(e => seenEventsStr.add(JSON.stringify(e)));
-      isFirstLivePoll = false;
-      return;
-    }
-
-    let startIndex = parseInt(localStorage.getItem('mindtwin_live_start_index') || '0', 10);
-    const relevantData = data.slice(startIndex);
-
     let newlyFound = false;
-    relevantData.forEach(e => {
+    data.forEach(e => {
       const str = JSON.stringify(e);
       if (!seenEventsStr.has(str)) {
         seenEventsStr.add(str);
@@ -935,11 +924,7 @@ function setLiveMode(on, saveToStorage = true, isManualToggle = false) {
     if (isManualToggle) {
       cachedEvents = [];
       seenEventsStr.clear();
-      isFirstLivePoll = true;
-      localStorage.removeItem('mindtwin_live_start_index');
       renderLiveEvents(cachedEvents);
-    } else {
-      isFirstLivePoll = false;
     }
     
     startPolling();

@@ -191,15 +191,30 @@ frame_history = deque(maxlen=FRAME_HISTORY_SIZE)
 error_log = []
 last_error_time = {}
 
-# Load persisted settings - clean events.log for a fresh session
 load_settings()
 
-try:
-    with open(EVENTS_LOG_FILE, "w", encoding="utf-8") as f:
-        f.truncate(0)
-    print("[consumer] events.log cleared successfully for fresh session.")
-except Exception as e:
-    print("[consumer] Error clearing events.log:", e)
+def load_events_log(limit: int = 2000) -> list[dict]:
+    events: deque[dict] = deque(maxlen=limit)
+    try:
+        with open(EVENTS_LOG_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except FileNotFoundError:
+        return []
+    except Exception as e:
+        print("[consumer] Error loading events.log:", e)
+        return []
+    return list(events)
+
+
+error_log.extend(load_events_log())
+print(f"[consumer] loaded {len(error_log)} events from events.log.")
 
 # ---------------------------
 # TORQUE MODEL MANAGER (PCA + IForest)

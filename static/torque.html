@@ -345,6 +345,50 @@
   const counts = {};
   TORQUE_FEATURES.forEach(f => { counts[f] = { pca: 0, ae: 0, combined: 0 }; });
 
+  const STORAGE_LIVE_COUNTS_KEY = 'mindtwin:torque:live_counts:v1';
+
+  function saveLiveCountsToStorage() {
+    if (!liveMode) return;
+    try {
+      localStorage.setItem(STORAGE_LIVE_COUNTS_KEY, JSON.stringify({
+        savedAt: Date.now(),
+        counts
+      }));
+    } catch {
+      // Best-effort only (quota/privacy mode/etc.)
+    }
+  }
+
+  function loadLiveCountsFromStorage() {
+    try {
+      const raw = localStorage.getItem(STORAGE_LIVE_COUNTS_KEY);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      const stored = (parsed && parsed.counts && typeof parsed.counts === 'object')
+        ? parsed.counts
+        : parsed;
+
+      if (!stored || typeof stored !== 'object') return false;
+
+      TORQUE_FEATURES.forEach(f => {
+        const c = stored[f];
+        if (!c || typeof c !== 'object') return;
+        const pca = Number(c.pca);
+        const ae = Number(c.ae);
+        const combined = Number(c.combined);
+        counts[f] = {
+          pca: Number.isFinite(pca) ? Math.max(0, Math.floor(pca)) : 0,
+          ae: Number.isFinite(ae) ? Math.max(0, Math.floor(ae)) : 0,
+          combined: Number.isFinite(combined) ? Math.max(0, Math.floor(combined)) : 0,
+        };
+      });
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // Loaded timeline for replay
   let replayEvents = [];   // sorted array of { secondKey, feature, method:'PCA'|'AE'|'Combined' }
   let replayIndex  = 0;
@@ -386,6 +430,7 @@
       counts[f] = { pca: 0, ae: 0, combined: 0 };
     });
     updateAllCards();
+    saveLiveCountsToStorage();
   }
 
   function updateAllCards() {
@@ -464,6 +509,7 @@
       updateCard(feat, type);
     }
     updateStatsBar();
+    saveLiveCountsToStorage();
   }
 
   /* ═══════════════════════════════════════════════════════════════
@@ -916,6 +962,9 @@
     // Static mode: load data and start replay
     loadData();
   } else {
+    // Restore live counters across refresh
+    loadLiveCountsFromStorage();
+    updateAllCards();
     document.getElementById('statSource').textContent = 'Live WebSocket';
     document.getElementById('statSource').className  = 'val green';
     document.getElementById('statFrame').textContent = 'Live';

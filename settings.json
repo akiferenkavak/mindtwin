@@ -1,0 +1,5 @@
+{
+  "thermal_threshold_c": 30.0,
+  "thermal_warning_c": 30.0,
+  "thermal_critical_c": 33.0
+}

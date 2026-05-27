@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>MindTwin – KUKA Robotic Arm Monitor</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: radial-gradient(circle at top, #1a1a1a, #0b0b0b);
+      color: #eee;
+      margin: 0;
+      padding: 0;
+    }
+
+    header {
+      padding: 3rem 4rem;
+      background: #171616;
+      border-bottom: 1px solid #222;
+    }
+
+    h1 {
+      font-size: 2.2rem;
+      margin: 1.5rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    main {
+      padding: 3rem 4rem;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 2rem;
+    }
+
+    .card {
+      background: linear-gradient(180deg, #1b1b1b, #111);
+      border: 1px solid #222;
+      border-radius: 16px;
+      padding: 2rem;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      cursor: pointer;
+      height: 100%;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    }
+
+    .card h2 {
+      margin: 0 0 0.5rem 0;
+      font-size: 1.5rem;
+    }
+
+    .card p {
+      color: #aaa;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      flex-grow: 1;
+    }
+
+    .icon {
+      font-size: 2rem;
+      margin-bottom: 1rem;
+      display: inline-block;
+    }
+
+    a {
+      text-decoration: none;
+      color: inherit;
+    }
+    
+    main > a {
+      display: block;
+      height: 100%;
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+  <h1>MindTwin – KUKA Robotic Arm Monitor</h1>
+  <nav style="display:flex;gap:1rem;margin-top:1rem;">
+    <a href="/thermal" style="color:#945151;text-decoration:none;font-weight:600;">Thermal</a>
+    <a href="/torque" style="color:#945151;text-decoration:none;font-weight:600;">Torque</a>
+    <a href="/events" style="color:#945151;text-decoration:none;font-weight:600;">Events</a>
+    <a href="/autoencoder" style="color:#945151;text-decoration:none;font-weight:600;">Autoencoder</a>
+    <a href="/pca" style="color:#945151;text-decoration:none;font-weight:600;">PCA</a>
+  </nav>
+</header>
+
+<main>
+  <a href="/thermal">
+    <div class="card">
+      <div class="icon"></div>
+      <h2>Thermal Monitor</h2>
+      <p>
+        Real-time thermal analysis of robotic arm components.
+        Detect overheating and abnormal temperature patterns.
+      </p>
+    </div>
+  </a>
+
+  <a href="/torque">
+    <div class="card">
+      <div class="icon"></div>
+      <h2>Torque Monitor</h2>
+      <p>
+        Joint-level torque comparison against ideal values.
+        Early detection of mechanical anomalies.
+      </p>
+    </div>
+  </a>
+
+  <a href="/autoencoder">
+    <div class="card">
+      <div class="icon"></div>
+      <h2>Autoencoder Anomaly Detection</h2>
+      <p>
+        Neural autoencoder-based detection across all sensor features.
+        Multiple and single-feature anomaly analysis.
+      </p>
+    </div>
+  </a>
+
+  <a href="/pca">
+    <div class="card">
+      <div class="icon"></div>
+      <h2>PCA Anomaly Detection</h2>
+      <p>
+        PCA reconstruction error-based anomaly detection.
+        Overall and per-feature analysis with live visualization.
+      </p>
+    </div>
+  </a>
+</main>
+
+</body>
+</html>

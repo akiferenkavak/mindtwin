@@ -84,7 +84,6 @@
       opacity: 0.75;
       font-size: 13px;
     }
-<<<<<<< HEAD
 
     .explain-btn {
       background: #911212;
@@ -101,8 +100,6 @@
       background: rgba(71, 132, 230, 0.788);
       transform: translateY(-1px);
     }
-=======
->>>>>>> e2615806bb5a37da1f94bb5be057a2d63f8b0f4f
   </style>
 </head>
 
@@ -124,22 +121,15 @@
   <div class="controls">
     <label for="thrInput">Threshold (°C)</label>
     <input id="thrInput" type="number" value="30" step="0.5" />
-<<<<<<< HEAD
     <div class="hint">Threshold changes are saved permanently to the backend.</div>
     <button id="explain-thermal-btn" class="explain-btn" type="button">Explain this with AI</button>
-=======
-    <div class="hint">Threshold değişince backend’e kaydedilir (kalıcı).</div>
->>>>>>> e2615806bb5a37da1f94bb5be057a2d63f8b0f4f
   </div>
 
   <div id="status">Starting…</div>
 
   <script>
     const SLIDE_WINDOW = 30;
-<<<<<<< HEAD
     let latestThermalStatus = "";
-=======
->>>>>>> e2615806bb5a37da1f94bb5be057a2d63f8b0f4f
 
     const KELVIN_OFFSET = 273.15;
     function toCelsius(v) {
@@ -261,27 +251,17 @@
         statusDiv.innerText = isAnomaly
           ? `⚠️ Thermal anomaly | Tmax=${tmax.toFixed(2)}°C (thr=${thrC}) | Frame ${frame} | ${ts}`
           : `Normal | Tmin=${tmin.toFixed(2)}°C Mean=${tmean.toFixed(2)}°C Tmax=${tmax.toFixed(2)}°C (thr=${thrC}) | Frame ${frame} | ${ts}`;
-<<<<<<< HEAD
         latestThermalStatus = statusDiv.innerText;
-=======
->>>>>>> e2615806bb5a37da1f94bb5be057a2d63f8b0f4f
 
         statusDiv.style.color = isAnomaly ? "red" : "lightgreen";
       } else {
         statusDiv.innerText = `Data received | Frame ${frame} | ${ts}`;
-<<<<<<< HEAD
         latestThermalStatus = statusDiv.innerText;
-=======
->>>>>>> e2615806bb5a37da1f94bb5be057a2d63f8b0f4f
         statusDiv.style.color = "#ddd";
       }
     };
 
-<<<<<<< HEAD
     // Load the persisted threshold from the backend when the page opens.
-=======
-    // sayfa açılınca backend'deki kaydedilmiş threshold'u çek
->>>>>>> e2615806bb5a37da1f94bb5be057a2d63f8b0f4f
     loadThresholdFromBackend();
   </script>
   <button id="chat-toggle">KUKA AI</button>
@@ -394,17 +374,11 @@
     const chatMessages = document.getElementById("chat-messages");
     const chatInput = document.getElementById("chat-input");
     const sendBtn = document.getElementById("send-btn");
-<<<<<<< HEAD
     const explainThermalBtn = document.getElementById("explain-thermal-btn");
 
     async function sendMessage(messageOverride) {
       const source = typeof messageOverride === "string" ? messageOverride : chatInput.value;
       const message = source.trim();
-=======
-
-    async function sendMessage() {
-      const message = chatInput.value.trim();
->>>>>>> e2615806bb5a37da1f94bb5be057a2d63f8b0f4f
 
       if (!message) return;
 
@@ -446,23 +420,16 @@
 
     sendBtn.onclick = sendMessage;
 
-<<<<<<< HEAD
     explainThermalBtn.onclick = () => {
       const status = latestThermalStatus || document.getElementById("status").innerText;
       chatbot.classList.remove("hidden");
       sendMessage(`Explain this thermal monitoring status: ${status}`);
     };
 
-=======
->>>>>>> e2615806bb5a37da1f94bb5be057a2d63f8b0f4f
     chatInput.addEventListener("keypress", (e) => {
       if (e.key === "Enter") sendMessage();
     });
   </script>
 </body>
 
-<<<<<<< HEAD
 </html>
-=======
-</html>
->>>>>>> e2615806bb5a37da1f94bb5be057a2d63f8b0f4f

@@ -697,9 +697,13 @@
   /* ═══════════════════════════════════════════════════════════════
      MODE CONTROL
   ═══════════════════════════════════════════════════════════════ */
-  function setLiveMode(on) {
+  function setLiveMode(on, saveToStorage = true) {
     liveMode = on;
-    localStorage.setItem('mindtwin_live_mode', on);
+    if (saveToStorage) {
+      localStorage.setItem('mindtwin_global_live_mode', on);
+    }
+    const toggle = document.getElementById('liveModeToggle');
+    if (toggle && toggle.checked !== on) toggle.checked = on;
     document.getElementById('liveIndicator').classList.toggle('on', on);
     document.getElementById('replayBarWrap').style.display = on ? 'none' : 'block';
 
@@ -722,7 +726,16 @@
   }
 
   document.getElementById('liveModeToggle').addEventListener('change', function() {
-    setLiveMode(this.checked);
+    setLiveMode(this.checked, true);
+  });
+
+  window.addEventListener('storage', (e) => {
+    if (e.key === 'mindtwin_global_live_mode') {
+      const isLive = e.newValue === 'true';
+      if (liveMode !== isLive) {
+        setLiveMode(isLive, false);
+      }
+    }
   });
 
   /* ═══════════════════════════════════════════════════════════════
@@ -903,7 +916,7 @@
   ═══════════════════════════════════════════════════════════════ */
   initCards();
 
-  const savedLive = localStorage.getItem('mindtwin_live_mode');
+  const savedLive = localStorage.getItem('mindtwin_global_live_mode');
   if (savedLive !== null) {
     liveMode = savedLive === 'true';
     document.getElementById('liveModeToggle').checked = liveMode;

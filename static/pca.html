@@ -1193,14 +1193,35 @@
       startLive();
     }
 
-    document.getElementById('liveModeToggle').addEventListener('change', function () {
-      liveMode = this.checked;
-      localStorage.setItem('mindtwin_live_mode', liveMode);
-      if (!liveMode) {
-        stopLive();
-        location.reload();
-      } else {
+    function applySharedLiveMode(enabled, saveToStorage = true) {
+      liveMode = enabled;
+      const toggle = document.getElementById('liveModeToggle');
+      if (toggle && toggle.checked !== liveMode) toggle.checked = liveMode;
+
+      if (saveToStorage) {
+        localStorage.setItem('mindtwin_global_live_mode', String(liveMode));
+      }
+
+      if (!allData) return;
+
+      if (liveMode) {
         startLive();
+      } else {
+        stopLive();
+        renderCurrentView(true);
+      }
+    }
+
+    document.getElementById('liveModeToggle').addEventListener('change', function () {
+      applySharedLiveMode(this.checked, true);
+    });
+
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'mindtwin_global_live_mode') {
+        const isLive = e.newValue === 'true';
+        if (liveMode !== isLive) {
+          applySharedLiveMode(isLive, false);
+        }
       }
     });
 
@@ -1288,7 +1309,7 @@
     createChart();
 
     // Read live mode state from localStorage, default to true
-    const savedLiveMode = localStorage.getItem('mindtwin_live_mode');
+    const savedLiveMode = localStorage.getItem('mindtwin_global_live_mode');
     if (savedLiveMode !== null) {
       liveMode = savedLiveMode === 'true';
       document.getElementById('liveModeToggle').checked = liveMode;

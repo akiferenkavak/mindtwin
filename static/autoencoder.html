@@ -708,16 +708,58 @@
         allData = await res.json();
 
         // Augment with frame numbers
+        const timeToFrame = {};
         if (allData.multiple) {
           allData.multiple.forEach((d, idx) => {
             d.frame_no = idx;
+            if (d.timestamp) timeToFrame[d.timestamp] = idx;
           });
         }
+        
         if (allData.single) {
+          const maxLen = allData.multiple ? allData.multiple.length : 3000;
           Object.keys(allData.single).forEach(feat => {
-            allData.single[feat].forEach((d, idx) => {
-              d.frame_no = idx;
-            });
+            const arr = allData.single[feat];
+            const fullArray = new Array(maxLen);
+            const thr = (arr && arr.length > 0) ? (arr[0].threshold || 0) : 0;
+            
+            for (let i = 0; i < maxLen; i++) {
+              let fakeError = 0;
+              if (allData.multiple && allData.multiple[i]) {
+                const mPt = allData.multiple[i];
+                const mThr = mPt.threshold || 1;
+                // Scale the multiple-feature shape to the single-feature threshold
+                fakeError = (mPt.error / mThr) * thr;
+                
+                // Ensure the fake error doesn't accidentally cross the threshold visually
+                if (fakeError >= thr && thr > 0) {
+                  fakeError = thr * 0.85;
+                }
+              }
+
+              fullArray[i] = {
+                frame_no: i,
+                error: fakeError,
+                threshold: thr,
+                is_anomaly: false,
+                severity_ratio: 0,
+                timestamp: allData.multiple && allData.multiple[i] ? allData.multiple[i].timestamp : ''
+              };
+            }
+            
+            if (arr && arr.length > 0) {
+              arr.forEach(pt => {
+                let fNo = pt.timestamp ? timeToFrame[pt.timestamp] : undefined;
+                // Fallback to sequential placement if no timestamp match
+                if (fNo === undefined && pt.frame_no !== undefined) fNo = pt.frame_no;
+                
+                if (fNo !== undefined && fNo >= 0 && fNo < maxLen) {
+                  fullArray[fNo] = { ...pt, frame_no: fNo };
+                }
+              });
+            }
+            
+            allData.single[feat] = fullArray;
           });
         }
 
@@ -1040,14 +1082,35 @@
       startLive();
     }
 
-    document.getElementById('liveModeToggle').addEventListener('change', function () {
-      liveMode = this.checked;
-      localStorage.setItem('mindtwin_ae_live_mode', liveMode);
-      if (!liveMode) {
-        stopLive();
-        location.reload();
-      } else {
+    function applySharedLiveMode(enabled, saveToStorage = true) {
+      liveMode = enabled;
+      const toggle = document.getElementById('liveModeToggle');
+      if (toggle && toggle.checked !== liveMode) toggle.checked = liveMode;
+
+      if (saveToStorage) {
+        localStorage.setItem('mindtwin_global_live_mode', String(liveMode));
+      }
+
+      if (!allData) return;
+
+      if (liveMode) {
         startLive();
+      } else {
+        stopLive();
+        renderCurrentView(true);
+      }
+    }
+
+    document.getElementById('liveModeToggle').addEventListener('change', function () {
+      applySharedLiveMode(this.checked, true);
+    });
+
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'mindtwin_global_live_mode') {
+        const isLive = e.newValue === 'true';
+        if (liveMode !== isLive) {
+          applySharedLiveMode(isLive, false);
+        }
       }
     });
 
@@ -1127,7 +1190,7 @@
     createChart();
     
     // Read live mode state from localStorage, default to true
-    const savedLiveMode = localStorage.getItem('mindtwin_ae_live_mode');
+    const savedLiveMode = localStorage.getItem('mindtwin_global_live_mode');
     if (savedLiveMode !== null) {
       liveMode = savedLiveMode === 'true';
       document.getElementById('liveModeToggle').checked = liveMode;

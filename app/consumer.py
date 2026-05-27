@@ -401,15 +401,17 @@ def log_torque_model_event(
     # Build concise human-readable message
     worst = meta.get("worst_joint", "?")
     if event_type == "TORQUE_AUTOENCODER":
-        msg = f"Autoencoder Torque Hatası: A{worst}"
+        msg = f"Autoencoder Torque Error: A{worst}"
     elif event_type == "TORQUE_PCA":
-        msg = f"PCA Torque Hatası: A{worst}"
+        msg = f"PCA Torque Error: A{worst}"
     elif event_type == "TORQUE_IFOREST":
-        msg = f"IForest Torque Hatası: A{worst}"
+        msg = f"IForest Torque Error: A{worst}"
+    elif event_type == "TORQUE_COMBINED":
+        msg = f"DOUBLE ANOMALY (PCA + AE): A{worst}"
     else:
         msg = f"{label} anomaly score exceeded threshold"
         if "worst_joint" in meta:
-            msg += f" | En yüksek hata: A{meta['worst_joint']}"
+            msg += f" | Highest error: A{meta['worst_joint']}"
 
     event = {
         "timestamp": ts,
@@ -475,38 +477,7 @@ def run_torque_server() -> None:
                     pkt["diffs"] = diffs
                     pkt["anomaly"] = any(flags)
 
-                    if pkt["anomaly"]:
-                        for j, d in enumerate(pkt["diffs"]):
-                            if d > TORQUE_THRESHOLD:
-                                key = ("TORQUE", j + 1)
-                                now = time.time()
-
-                                if key not in last_error_time or now - last_error_time[key] > ERROR_COOLDOWN:
-                                    if d > 0.6:
-                                        severity = "CRITICAL"
-                                    elif d > 0.3:
-                                        severity = "WARNING"
-                                    else:
-                                        severity = "INFO"
-
-                                    event = {
-                                        "timestamp": pkt["timestamp"],
-                                        "type": "TORQUE",
-                                        "severity": severity,
-                                        "message": f"Joint {j+1} torque exceeded threshold",
-                                        "meta": {
-                                            "joint": j + 1,
-                                            "diff": d,
-                                            "threshold": TORQUE_THRESHOLD,
-                                            "frame_no": pkt["frame_no"],
-                                        },
-                                    }
-
-                                    error_log.append(event)
-                                    with open(EVENTS_LOG_FILE, "a", encoding="utf-8") as f:
-                                        f.write(json.dumps(event) + "\n")
-
-                                    last_error_time[key] = now
+                    # Raw torque threshold checks removed as requested
 
                     # PCA + IForest scores
                     model_payload = {}
@@ -603,6 +574,11 @@ def run_torque_server() -> None:
                             0,
                             pkt["frame_no"],
                             pkt["timestamp"],
+                            extra_meta={
+                                "pca_score": model_payload["pca_score"],
+                                "ae_score": ae_score,
+                                "worst_joint": worst_joint
+                            }
                         )
 
 
@@ -634,7 +610,7 @@ def run_torque_server() -> None:
                                 "type": "TORQUE_TRIPLE_THREAT",
                                 "severity": "CRITICAL",
                                 "message": (
-                                    f"AYNI FRAME'DE SENSÖR + MODEL ANOMALİSİ! "
+                                    f"SENSOR + MODEL ANOMALY IN SAME FRAME! "
                                     f"Joint {worst_joint} Δ={max_diff:.3f} | "
                                     + ", ".join(models_active)
                                 ),

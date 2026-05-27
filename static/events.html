@@ -828,16 +828,37 @@ async function loadStaticResults() {
    LIVE MODE POLLING
 ═══════════════════════════════════════════════════════════════════ */
 
+let seenEventsStr = new Set();
+let isFirstLivePoll = false;
+
 async function fetchEvents() {
   try {
     const res = await fetch('/errors', { cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    cachedEvents = await res.json();
+    const data = await res.json();
 
-    statusDiv.textContent = `Updated: ${new Date().toLocaleTimeString()}`;
-    statusDiv.style.color = '#ccc';
+    if (isFirstLivePoll) {
+      data.forEach(e => seenEventsStr.add(JSON.stringify(e)));
+      isFirstLivePoll = false;
+      return;
+    }
 
-    renderLiveEvents(cachedEvents);
+    let newlyFound = false;
+    data.forEach(e => {
+      const str = JSON.stringify(e);
+      if (!seenEventsStr.has(str)) {
+        seenEventsStr.add(str);
+        cachedEvents.push(e);
+        if (cachedEvents.length > 500) cachedEvents.shift();
+        newlyFound = true;
+      }
+    });
+
+    if (newlyFound) {
+      statusDiv.textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+      statusDiv.style.color = '#ccc';
+      renderLiveEvents(cachedEvents);
+    }
   } catch (e) {
     statusDiv.textContent = `Cannot load /errors — ${e.message}`;
     statusDiv.style.color = '#f87171';
@@ -866,11 +887,16 @@ function setLiveMode(on) {
   const timeFilterSelect = document.getElementById('timeFilter');
 
   if (on) {
-    timeFilterSelect.disabled = false;
-    timeFilterSelect.value = '5';
+    timeFilterSelect.disabled = true;
     modeInfoDiv.style.display = 'none';
-    statusDiv.textContent = 'Live mode — showing last 5 minutes…';
+    statusDiv.textContent = 'Live mode — listening for new events...';
     statusDiv.style.color = '#ccc';
+    
+    cachedEvents = [];
+    seenEventsStr.clear();
+    isFirstLivePoll = true;
+    renderLiveEvents(cachedEvents);
+    
     startPolling();
   } else {
     stopPolling();

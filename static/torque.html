@@ -781,7 +781,8 @@
     }
   });
 
-  const ws = new WebSocket('ws://127.0.0.1:8000/ws/torque');
+  const wsProto = (location.protocol === "https:") ? "wss" : "ws";
+  const ws = new WebSocket(`${wsProto}://${location.host}/ws/torque`);
 
   ws.onopen  = () => { statusDiv.innerText = 'Connected. Waiting for sensor data…'; statusDiv.style.color = '#ddd'; };
   ws.onerror = () => { statusDiv.innerText = 'WebSocket error. Backend not running.'; statusDiv.style.color = 'red'; };

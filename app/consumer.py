@@ -11,8 +11,8 @@ import threading
 import asyncio
 import os
 import time
+import re
 from pathlib import Path
-import google.generativeai as genai
 from dotenv import load_dotenv
 from fastapi import Request
 from collections import deque
@@ -27,11 +27,19 @@ import uvicorn
 BASE_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(BASE_DIR / "app" / ".env")   # absolute path – her zaman bulunur
 
-# API key: .env'den oku, yoksa doğrudan kullan
-_API_KEY = os.getenv("GOOGLE_API_KEY") or "AIzaSyB7n4hUvikR9uU6AEXXci7Wp0tJmcNDnY4"
-genai.configure(api_key=_API_KEY)
+try:
+    import google.generativeai as genai
+except ModuleNotFoundError:
+    genai = None
 
-gemini_model = genai.GenerativeModel("gemini-2.5-flash")
+if genai is not None:
+    _API_KEY = os.getenv("GOOGLE_API_KEY")
+    if _API_KEY:
+        genai.configure(api_key=_API_KEY)
+    else:
+        print("[chat] GOOGLE_API_KEY missing; /chat endpoint will be disabled.")
+
+gemini_model = genai.GenerativeModel("gemini-2.5-flash") if genai is not None and os.getenv("GOOGLE_API_KEY") else None
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
@@ -62,6 +70,45 @@ ae_single_thr     = KB_AUTOENCODER.get("meta", {}).get("single_threshold", None)
 
 # single: feature → ordered list (her feature için ayrı liste)
 ae_single_by_feat = KB_AUTOENCODER.get("single", {})
+
+_TIME_KEY_RE = re.compile(r"(\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)")
+
+
+def _extract_time_key(ts: str) -> Optional[str]:
+    """Extract 'HH:MM:SS(.ffffff)' from various timestamp formats."""
+    if not ts:
+        return None
+    m = _TIME_KEY_RE.search(str(ts))
+    if m:
+        return m.group(1)
+    return None
+
+
+def _build_ae_single_lookup(by_feat: dict) -> dict:
+    """
+    AE 'single' export is sparse per-feature (only when that feature is top-error).
+    For live injection we map by timestamp key instead of frame index modulo.
+    """
+    if not isinstance(by_feat, dict):
+        return {}
+
+    out = {}
+    for feat, items in by_feat.items():
+        if not isinstance(items, list):
+            continue
+        time_map = {}
+        for row in items:
+            if not isinstance(row, dict):
+                continue
+            tkey = _extract_time_key(row.get("timestamp") or row.get("time") or "")
+            if tkey:
+                time_map[tkey] = row
+        if time_map:
+            out[str(feat)] = time_map
+    return out
+
+
+ae_single_lookup = _build_ae_single_lookup(ae_single_by_feat)
 
 
 def translate_to_english(text: str) -> str:
@@ -120,8 +167,32 @@ HOST = "127.0.0.1"
 PORT_THERMAL_TCP = 8765
 PORT_TORQUE_TCP = 8766
 
-EVENTS_LOG_FILE = str(BASE_DIR / "events.log")
-SETTINGS_FILE = str(BASE_DIR / "settings.json")
+def _default_state_dir() -> Path:
+    """Runtime state dir (logs/settings) kept outside the git repo by default."""
+    override = os.getenv("MINDTWIN_STATE_DIR")
+    if override:
+        return Path(override).expanduser()
+
+    xdg_state = os.getenv("XDG_STATE_HOME")
+    if xdg_state:
+        return Path(xdg_state).expanduser() / "mindtwin"
+
+    if os.name == "nt":
+        appdata = os.getenv("APPDATA") or os.getenv("LOCALAPPDATA")
+        if appdata:
+            return Path(appdata) / "MindTwin"
+
+    return Path.home() / ".mindtwin"
+
+
+STATE_DIR = _default_state_dir()
+STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+EVENTS_LOG_FILE = str(STATE_DIR / "events.log")
+SETTINGS_FILE = str(STATE_DIR / "settings.json")
+
+LEGACY_EVENTS_LOG_FILE = BASE_DIR / "events.log"
+LEGACY_SETTINGS_FILE = BASE_DIR / "settings.json"
 
 ERROR_COOLDOWN = 5.0  # saniye
 FRAME_HISTORY_SIZE = 200
@@ -130,7 +201,8 @@ MODEL_EVENT_COOLDOWN = 5.0
 # ---------------------------
 # TORQUE (DOKUNMADIM)
 # ---------------------------
-TORQUE_THRESHOLD = 2.0
+# Producer-side calibration targets ~0.45 threshold in UI units.
+TORQUE_THRESHOLD = 0.45
 
 # ---------------------------
 # THERMAL (kalıcı ayar)
@@ -149,20 +221,29 @@ settings = DEFAULT_SETTINGS.copy()
 
 def load_settings() -> None:
     global settings
-    if os.path.exists(SETTINGS_FILE):
+    candidates = [SETTINGS_FILE]
+    if LEGACY_SETTINGS_FILE.exists():
+        candidates.append(str(LEGACY_SETTINGS_FILE))
+
+    for path in candidates:
+        if not os.path.exists(path):
+            continue
         try:
-            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict):
                 merged = DEFAULT_SETTINGS.copy()
                 merged.update({k: float(v) for k, v in data.items() if k in DEFAULT_SETTINGS})
                 settings = merged
+                if path != SETTINGS_FILE:
+                    save_settings()  # migrate legacy settings into state dir
+                return
         except Exception:
-            # bozuksa defaultla devam
             settings = DEFAULT_SETTINGS.copy()
-    else:
-        settings = DEFAULT_SETTINGS.copy()
-        save_settings()  # ilk kez oluştur
+            return
+
+    settings = DEFAULT_SETTINGS.copy()
+    save_settings()  # first run: create
 
 
 def save_settings() -> None:
@@ -482,12 +563,8 @@ def run_torque_server() -> None:
                                 now = time.time()
 
                                 if key not in last_error_time or now - last_error_time[key] > ERROR_COOLDOWN:
-                                    if d > 0.6:
-                                        severity = "CRITICAL"
-                                    elif d > 0.3:
-                                        severity = "WARNING"
-                                    else:
-                                        severity = "INFO"
+                                    ratio = (d / TORQUE_THRESHOLD) if TORQUE_THRESHOLD else float("inf")
+                                    severity = "CRITICAL" if ratio >= 1.4 else "WARNING"
 
                                     event = {
                                         "timestamp": pkt["timestamp"],
@@ -558,20 +635,24 @@ def run_torque_server() -> None:
                     worst_single_ae_joint = None
                     worst_single_ae_expl = ""
                     single_thr = ae_single_thr or 7.20
+                    pkt_tkey = _extract_time_key(pkt.get("timestamp") or "")
 
                     for i in range(1, 7):
                         feat_name = f"TORQUE_A{i}"
-                        feat_list = ae_single_by_feat.get(feat_name, [])
-                        if feat_list:
-                            row = feat_list[pkt["frame_no"] % len(feat_list)]
-                            err = float(row.get("error", 0))
-                            is_anom = bool(row.get("is_anomaly", False))
-                            if is_anom:
-                                single_torque_anomalies.append((i, err, row.get("explanation", "")))
-                            if err > worst_single_ae_score:
-                                worst_single_ae_score = err
-                                worst_single_ae_joint = i
-                                worst_single_ae_expl = row.get("explanation", "")
+                        if not pkt_tkey:
+                            continue
+                        row = ae_single_lookup.get(feat_name, {}).get(pkt_tkey)
+                        if not isinstance(row, dict):
+                            continue
+
+                        err = float(row.get("error") or 0)
+                        is_anom = bool(row.get("is_anomaly", False))
+                        if is_anom:
+                            single_torque_anomalies.append((i, err, row.get("explanation", "")))
+                        if err > worst_single_ae_score:
+                            worst_single_ae_score = err
+                            worst_single_ae_joint = i
+                            worst_single_ae_expl = row.get("explanation", "")
 
                     ae_torque_is_anomaly = len(single_torque_anomalies) > 0
 
@@ -600,9 +681,10 @@ def run_torque_server() -> None:
                         log_torque_model_event(
                             "TORQUE_COMBINED",
                             max(ae_score, model_payload["pca_score"]),
-                            0,
+                            1.0,
                             pkt["frame_no"],
                             pkt["timestamp"],
+                            severity="WARNING",
                         )
 
 
@@ -753,7 +835,7 @@ def pca_results():
 # ANOMALY HELPERS (backend-side)
 # ---------------------------
 
-def _extract_second_from_ts(ts: str) -> str | None:
+def _extract_second_from_ts(ts: str) -> Optional[str]:
     """Extract HH:mm:ss from various timestamp formats."""
     if not ts:
         return None
@@ -924,6 +1006,13 @@ class ChatRequest(BaseModel):
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
+    if gemini_model is None:
+        return {
+            "reply": (
+                "Chatbot devre dışı: `google-generativeai` kurulu değil veya `GOOGLE_API_KEY` ayarlı değil. "
+                "Kurulum: `python3 -m pip install -r requirements.txt` ve `.env` içine `GOOGLE_API_KEY=...`."
+            )
+        }
 
     thermal_data   = latest_frame  if latest_frame  else {}
     torque_data    = latest_torque if latest_torque else {}

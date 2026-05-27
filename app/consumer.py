@@ -50,6 +50,7 @@ KB_EVAL_REPORT     = _load_json_safe(ARTIFACTS_DIR / "eval_report.json")
 KB_PCA_THRESHOLDS  = _load_json_safe(ARTIFACTS_DIR / "pca_thresholds.json")
 KB_IFOREST_THR     = _load_json_safe(ARTIFACTS_DIR / "iforest_threshold.json")
 KB_AUTOENCODER     = _load_json_safe(ARTIFACTS_DIR / "autoencoder_results.json")
+KB_PCA_RESULTS     = _load_json_safe(ARTIFACTS_DIR / "pca_results.json")
 
 # ---------------------------
 # AUTOENCODER LOOKUPS (FRAME-INDEX BASED — döngüsel, timestamp bağımsız)
@@ -695,6 +696,11 @@ def autoencoder_page():
     return FileResponse(str(BASE_DIR / "static" / "autoencoder.html"))
 
 
+@app.get("/pca")
+def pca_page():
+    return FileResponse(str(BASE_DIR / "static" / "pca.html"))
+
+
 @app.get("/api/autoencoder/results")
 def autoencoder_results():
     """Serve the pre-computed autoencoder anomaly results JSON."""
@@ -718,6 +724,189 @@ def autoencoder_results():
             "multiple": [],
             "single": {}
         })
+
+
+@app.get("/api/pca/results")
+def pca_results():
+    """Serve the pre-computed PCA anomaly results JSON."""
+    results_path = BASE_DIR / "artifacts" / "pca_results.json"
+    if results_path.exists():
+        try:
+            with open(results_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return JSONResponse(content=data)
+        except Exception as e:
+            print("[pca] Error reading results JSON:", e)
+            return JSONResponse(
+                content={"error": str(e), "overall": [], "per_feature": {}},
+                status_code=500
+            )
+    else:
+        return JSONResponse(content={
+            "meta": {"note": "Run models/stats/export_pca_results.py to generate results"},
+            "overall": [],
+            "per_feature": {}
+        })
+
+
+# ---------------------------
+# ANOMALY HELPERS (backend-side)
+# ---------------------------
+
+def _extract_second_from_ts(ts: str) -> str | None:
+    """Extract HH:mm:ss from various timestamp formats."""
+    if not ts:
+        return None
+    import re
+    m = re.search(r'(\d{2}:\d{2}:\d{2})', ts)
+    if m:
+        return m.group(1)
+    try:
+        from datetime import datetime
+        d = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        return d.strftime('%H:%M:%S')
+    except Exception:
+        pass
+    return None
+
+
+@app.get("/api/anomaly/combined")
+def anomaly_combined():
+    """
+    Return Combined anomalies: same HH:mm:ss + same feature
+    detected by both PCA (per_feature) and Autoencoder (single).
+    Combined list is NOT extra-counted — it's a cross-reference.
+    """
+    try:
+        pca_path = BASE_DIR / "artifacts" / "pca_results.json"
+        ae_path  = BASE_DIR / "artifacts" / "autoencoder_results.json"
+
+        if not pca_path.exists() or not ae_path.exists():
+            return JSONResponse(content={"combined": [], "count": 0})
+
+        with open(pca_path, "r", encoding="utf-8") as f:
+            pca_data = json.load(f)
+        with open(ae_path, "r", encoding="utf-8") as f:
+            ae_data = json.load(f)
+
+        # Collect PCA anomalies with secondKey
+        pca_anomalies = []
+        per_feature = pca_data.get("per_feature", {})
+        for feat, items in per_feature.items():
+            if not isinstance(items, list):
+                continue
+            for row in items:
+                if not row.get("is_anomaly"):
+                    continue
+                ts = row.get("timestamp") or row.get("time") or row.get("DateTime") or ""
+                second_key = _extract_second_from_ts(str(ts))
+                pca_anomalies.append({
+                    "feature": row.get("feature") or feat,
+                    "frame": row.get("frame_no"),
+                    "timestamp": ts,
+                    "secondKey": second_key,
+                    "pca_score": row.get("pca_score"),
+                    "feat_threshold": row.get("feat_threshold"),
+                    "severity_ratio": row.get("severity_ratio"),
+                })
+
+        # Collect AE single anomalies with secondKey
+        ae_anomalies = []
+        ae_single = ae_data.get("single", {})
+        for feat, items in ae_single.items():
+            if not isinstance(items, list):
+                continue
+            for row in items:
+                if not row.get("is_anomaly"):
+                    continue
+                ts = row.get("timestamp") or row.get("time") or ""
+                second_key = _extract_second_from_ts(str(ts))
+                ae_anomalies.append({
+                    "feature": row.get("feature") or feat,
+                    "timestamp": ts,
+                    "secondKey": second_key,
+                    "error": row.get("error"),
+                    "threshold": row.get("threshold"),
+                    "severity_ratio": row.get("severity_ratio"),
+                })
+
+        # Match: same second + same feature
+        combined = []
+        for pca in pca_anomalies:
+            if not pca["secondKey"] or not pca["feature"]:
+                continue
+            for ae in ae_anomalies:
+                if not ae["secondKey"] or not ae["feature"]:
+                    continue
+                if pca["secondKey"] == ae["secondKey"] and pca["feature"] == ae["feature"]:
+                    combined.append({
+                        "time": pca["secondKey"],
+                        "feature": pca["feature"],
+                        "pcaScore": pca["pca_score"],
+                        "aeError": ae["error"],
+                        "pcaFrame": pca["frame"],
+                        "pcaTimestamp": pca["timestamp"],
+                        "aeTimestamp": ae["timestamp"],
+                        "matchReason": "same second and same feature",
+                    })
+
+        return JSONResponse(content={"combined": combined, "count": len(combined)})
+
+    except Exception as e:
+        print("[anomaly/combined] error:", e)
+        return JSONResponse(content={"combined": [], "count": 0, "error": str(e)}, status_code=500)
+
+
+@app.get("/api/anomaly/torque-counts")
+def anomaly_torque_counts():
+    """
+    Return anomaly counts per TORQUE_A1-A6 from PCA and Autoencoder results.
+    Combined records are NOT counted separately.
+    """
+    TORQUE_FEATURES = [
+        "TORQUE_A1","TORQUE_A2","TORQUE_A3",
+        "TORQUE_A4","TORQUE_A5","TORQUE_A6"
+    ]
+    counts = {f: {"pca": 0, "ae": 0, "total": 0} for f in TORQUE_FEATURES}
+
+    try:
+        pca_path = BASE_DIR / "artifacts" / "pca_results.json"
+        ae_path  = BASE_DIR / "artifacts" / "autoencoder_results.json"
+
+        if pca_path.exists():
+            with open(pca_path, "r", encoding="utf-8") as f:
+                pca_data = json.load(f)
+            per_feature = pca_data.get("per_feature", {})
+            for feat, items in per_feature.items():
+                if feat not in TORQUE_FEATURES:
+                    continue
+                if not isinstance(items, list):
+                    continue
+                for row in items:
+                    if row.get("is_anomaly"):
+                        counts[feat]["pca"] += 1
+
+        if ae_path.exists():
+            with open(ae_path, "r", encoding="utf-8") as f:
+                ae_data = json.load(f)
+            ae_single = ae_data.get("single", {})
+            for feat, items in ae_single.items():
+                if feat not in TORQUE_FEATURES:
+                    continue
+                if not isinstance(items, list):
+                    continue
+                for row in items:
+                    if row.get("is_anomaly"):
+                        counts[feat]["ae"] += 1
+
+        for feat in TORQUE_FEATURES:
+            counts[feat]["total"] = counts[feat]["pca"] + counts[feat]["ae"]
+
+        return JSONResponse(content={"counts": counts})
+
+    except Exception as e:
+        print("[anomaly/torque-counts] error:", e)
+        return JSONResponse(content={"counts": counts, "error": str(e)}, status_code=500)
 
 
 @app.get("/frames/latest")

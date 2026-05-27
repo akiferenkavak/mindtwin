@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Autoencoder Anomaly Detection – MindTwin</title>
-  <meta name="description" content="KUKA robot sensor data anomaly detection using neural autoencoder. Multiple and single-feature analysis with live chart visualization." />
+  <title>PCA Anomaly Detection – MindTwin</title>
+  <meta name="description" content="KUKA robot sensor data anomaly detection using PCA reconstruction error. Overall and per-feature analysis with live chart visualization." />
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <style>
@@ -101,12 +101,12 @@
     }
 
     .tab-btn.active {
-      background: #911212;
+      background: #1a3d6b;
       color: #fff;
     }
 
     .tab-btn:hover:not(.active) {
-      background: rgba(145, 18, 18, 0.25);
+      background: rgba(26, 61, 107, 0.35);
       color: #fff;
     }
 
@@ -154,7 +154,7 @@
       transition: 0.3s;
     }
 
-    input:checked + .slider { background: #911212; }
+    input:checked + .slider { background: #1a3d6b; }
     input:checked + .slider::before { transform: translateX(20px); }
 
     .btn {
@@ -171,11 +171,11 @@
     .btn:active { transform: scale(0.97); }
 
     .btn-primary {
-      background: #911212;
+      background: #1a3d6b;
       color: #fff;
     }
 
-    .btn-primary:hover { background: #b01414; }
+    .btn-primary:hover { background: #2254a0; }
 
     .btn-secondary {
       background: #222;
@@ -191,7 +191,7 @@
       align-items: center;
       gap: 0.35rem;
       font-size: 0.82rem;
-      color: #ef4444;
+      color: #4da6ff;
       font-weight: 700;
       opacity: 0;
       transition: opacity 0.3s;
@@ -202,7 +202,7 @@
     .live-dot {
       width: 7px;
       height: 7px;
-      background: #ef4444;
+      background: #4da6ff;
       border-radius: 50%;
       animation: pulse 1.2s infinite;
     }
@@ -212,7 +212,7 @@
       50% { opacity: 0.4; transform: scale(0.75); }
     }
 
-    /* ── Feature dropdown (single mode) ─────────────────── */
+    /* ── Feature dropdown (per-feature mode) ────────────── */
     .feature-row {
       display: flex;
       align-items: center;
@@ -240,7 +240,7 @@
     }
 
     select#featureSelect:hover, select#featureSelect:focus {
-      border-color: #911212;
+      border-color: #1a3d6b;
     }
 
     .feature-badge {
@@ -270,8 +270,87 @@
 
     .stat-pill .label { color: #888; margin-right: 0.35rem; }
     .stat-pill .value { color: #eee; font-weight: 700; }
-    .stat-pill .value.red { color: #ef4444; }
+    .stat-pill .value.red   { color: #ef4444; }
     .stat-pill .value.green { color: #22c55e; }
+    .stat-pill .value.blue  { color: #4da6ff; }
+
+    /* ── Model info panel ────────────────────────────────── */
+    .info-row {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-bottom: 1.25rem;
+    }
+
+    .info-card {
+      background: linear-gradient(135deg, #1a2a3d, #141e2e);
+      border: 1px solid #1e3a5f;
+      border-radius: 12px;
+      padding: 0.85rem 1.2rem;
+      font-size: 0.82rem;
+      flex: 1;
+      min-width: 180px;
+    }
+
+    .info-card .ic-title {
+      color: #4da6ff;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .info-card .ic-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.2rem;
+    }
+
+    .info-card .ic-key { color: #778; }
+    .info-card .ic-val { color: #cde; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+    /* Variance bars */
+    .var-bar-wrap {
+      margin-top: 0.5rem;
+    }
+
+    .var-bar-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.25rem;
+      font-size: 0.78rem;
+    }
+
+    .var-bar-label {
+      color: #778;
+      width: 30px;
+      flex-shrink: 0;
+    }
+
+    .var-bar-track {
+      flex: 1;
+      height: 6px;
+      background: #1e2e40;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .var-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #1a3d6b, #4da6ff);
+      border-radius: 4px;
+      transition: width 0.4s;
+    }
+
+    .var-bar-pct {
+      color: #aaa;
+      width: 38px;
+      text-align: right;
+      flex-shrink: 0;
+    }
 
     /* ── Chart card ─────────────────────────────────────── */
     .chart-card {
@@ -289,7 +368,7 @@
     }
 
     /* Custom tooltip */
-    .ae-tooltip {
+    .pca-tooltip {
       position: fixed;
       background: #1e1e1e;
       border: 1px solid #333;
@@ -298,19 +377,20 @@
       font-size: 0.82rem;
       pointer-events: none;
       z-index: 9998;
-      max-width: 280px;
+      max-width: 300px;
       box-shadow: 0 8px 28px rgba(0,0,0,0.6);
       display: none;
     }
 
-    .ae-tooltip .tt-time { color: #888; font-size: 0.78rem; margin-bottom: 0.35rem; }
-    .ae-tooltip .tt-row { display: flex; justify-content: space-between; gap: 1rem; margin-bottom: 0.2rem; }
-    .ae-tooltip .tt-key { color: #888; }
-    .ae-tooltip .tt-val { color: #eee; font-weight: 600; }
-    .ae-tooltip .tt-val.anomaly { color: #ef4444; }
-    .ae-tooltip .tt-val.ok { color: #22c55e; }
-    .ae-tooltip .tt-cause { color: #f59e0b; font-style: italic; margin-top: 0.35rem; font-size: 0.79rem; }
-    .ae-tooltip hr { border: none; border-top: 1px solid #2a2a2a; margin: 0.4rem 0; }
+    .pca-tooltip .tt-time { color: #888; font-size: 0.78rem; margin-bottom: 0.35rem; }
+    .pca-tooltip .tt-row  { display: flex; justify-content: space-between; gap: 1rem; margin-bottom: 0.2rem; }
+    .pca-tooltip .tt-key  { color: #888; }
+    .pca-tooltip .tt-val  { color: #eee; font-weight: 600; }
+    .pca-tooltip .tt-val.anomaly { color: #ef4444; }
+    .pca-tooltip .tt-val.ok      { color: #22c55e; }
+    .pca-tooltip .tt-val.info    { color: #4da6ff; }
+    .pca-tooltip .tt-cause { color: #f59e0b; font-style: italic; margin-top: 0.35rem; font-size: 0.79rem; }
+    .pca-tooltip hr { border: none; border-top: 1px solid #2a2a2a; margin: 0.4rem 0; }
 
     /* ── Anomaly table ───────────────────────────────────── */
     .table-section {
@@ -336,7 +416,7 @@
     }
 
     .badge-count {
-      background: #911212;
+      background: #1a3d6b;
       color: #fff;
       border-radius: 20px;
       padding: 0.2rem 0.6rem;
@@ -344,13 +424,13 @@
       font-weight: 700;
     }
 
-    table.ae-table {
+    table.pca-table {
       width: 100%;
       border-collapse: collapse;
       font-size: 0.84rem;
     }
 
-    table.ae-table th {
+    table.pca-table th {
       text-align: left;
       padding: 0.75rem 1rem;
       background: rgba(255,255,255,0.04);
@@ -363,27 +443,28 @@
       white-space: nowrap;
     }
 
-    table.ae-table td {
+    table.pca-table td {
       padding: 0.65rem 1rem;
       border-bottom: 1px solid #1a1a1a;
       vertical-align: middle;
       white-space: nowrap;
     }
 
-    table.ae-table tr:last-child td { border-bottom: none; }
+    table.pca-table tr:last-child td { border-bottom: none; }
+    table.pca-table tr:hover td { background: rgba(255,255,255,0.03); }
 
-    table.ae-table tr:hover td { background: rgba(255,255,255,0.03); }
-
-    .td-time { color: #aaa; font-variant-numeric: tabular-nums; }
-    .td-type-multi { color: #818cf8; font-weight: 600; }
-    .td-type-single { color: #34d399; font-weight: 600; }
+    .td-time    { color: #aaa; font-variant-numeric: tabular-nums; }
+    .td-type-overall { color: #4da6ff; font-weight: 600; }
+    .td-type-feature { color: #34d399; font-weight: 600; }
     .td-feature { color: #f59e0b; font-family: monospace; font-size: 0.82rem; }
-    .td-error { color: #eee; font-variant-numeric: tabular-nums; }
-    .td-thr { color: #777; font-variant-numeric: tabular-nums; }
+    .td-score   { color: #eee; font-variant-numeric: tabular-nums; }
+    .td-thr     { color: #777; font-variant-numeric: tabular-nums; }
     .td-sev-high { color: #ef4444; font-weight: 700; }
     .td-sev-med  { color: #f59e0b; font-weight: 700; }
     .td-sev-low  { color: #22c55e; font-weight: 700; }
-    .td-explain  { color: #aaa; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+    .td-explain  { color: #aaa; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+    .td-iforest-yes { color: #ef4444; font-weight: 700; }
+    .td-iforest-no  { color: #555; }
 
     .no-data {
       text-align: center;
@@ -392,7 +473,7 @@
       font-size: 0.9rem;
     }
 
-    /* ── Chat bot (identical to other pages) ────────────── */
+    /* ── Chat bot ────────────────────────────────────────── */
     #chat-toggle {
       position: fixed;
       right: 20px;
@@ -401,7 +482,7 @@
       height: 64px;
       border-radius: 50%;
       border: none;
-      background: #911212;
+      background: #1a3d6b;
       color: white;
       font-size: 1.1rem;
       font-weight: bold;
@@ -430,7 +511,7 @@
 
     #chat-header {
       padding: 1rem;
-      background: #911212;
+      background: #1a3d6b;
       font-weight: bold;
     }
 
@@ -460,7 +541,7 @@
     }
 
     #send-btn {
-      background: #911212;
+      background: #1a3d6b;
       color: white;
       border: none;
       padding: 1rem;
@@ -478,20 +559,20 @@
     <a href="/thermal">Thermal</a>
     <a href="/torque">Torque</a>
     <a href="/events">Events</a>
-    <a href="/autoencoder" class="active">Autoencoder</a>
-    <a href="/pca">PCA</a>
+    <a href="/autoencoder">Autoencoder</a>
+    <a href="/pca" class="active">PCA</a>
   </nav>
 
   <div class="page-header">
-    <h1>Autoencoder Anomaly Detection</h1>
-    <p>KUKA robot sensor data is analyzed using autoencoder-based anomaly detection.</p>
+    <h1>PCA Anomaly Detection</h1>
+    <p>KUKA robot sensor data is analyzed using PCA reconstruction error-based anomaly detection.</p>
   </div>
 
   <!-- ── Toolbar ───────────────────────────────────────────── -->
   <div class="toolbar">
     <div class="tab-group">
-      <button id="tabMultiple" class="tab-btn active" onclick="switchMode('multiple')">Multiple Autoencoder</button>
-      <button id="tabSingle"   class="tab-btn"        onclick="switchMode('single')">Single Autoencoder</button>
+      <button id="tabOverall"  class="tab-btn active" onclick="switchMode('overall')">Overall PCA</button>
+      <button id="tabFeature"  class="tab-btn"        onclick="switchMode('feature')">Per-Feature PCA</button>
     </div>
 
     <div class="live-toggle">
@@ -509,14 +590,38 @@
 
   <!-- ── Stats bar ─────────────────────────────────────────── -->
   <div class="stats-bar" id="statsBar">
-    <div class="stat-pill"><span class="label">Mode:</span><span class="value" id="statMode">Multiple</span></div>
+    <div class="stat-pill"><span class="label">Mode:</span><span class="value" id="statMode">Overall</span></div>
     <div class="stat-pill"><span class="label">Total Points:</span><span class="value" id="statTotal">–</span></div>
     <div class="stat-pill"><span class="label">Anomalies:</span><span class="value red" id="statAnom">–</span></div>
     <div class="stat-pill"><span class="label">Threshold:</span><span class="value" id="statThr">–</span></div>
     <div class="stat-pill"><span class="label">Data Source:</span><span class="value green" id="statSource">Loading…</span></div>
+    <div class="stat-pill"><span class="label">Components:</span><span class="value blue" id="statComponents">–</span></div>
+    <div class="stat-pill"><span class="label">Variance Explained:</span><span class="value blue" id="statVariance">–</span></div>
   </div>
 
-  <!-- ── Single mode: feature selector ─────────────────────── -->
+  <!-- ── Model info panel ─────────────────────────────────── -->
+  <div class="info-row" id="infoRow">
+    <div class="info-card" id="pcaInfoCard">
+      <div class="ic-title">PCA Model Info</div>
+      <div class="ic-row"><span class="ic-key">Components</span><span class="ic-val" id="ic-ncomp">–</span></div>
+      <div class="ic-row"><span class="ic-key">Threshold</span><span class="ic-val" id="ic-thr">–</span></div>
+      <div class="ic-row"><span class="ic-key">Quantile</span><span class="ic-val" id="ic-q">–</span></div>
+      <div class="ic-row"><span class="ic-key">Train Samples</span><span class="ic-val" id="ic-samples">–</span></div>
+      <div class="ic-row"><span class="ic-key">Feature Dim</span><span class="ic-val" id="ic-dim">–</span></div>
+    </div>
+    <div class="info-card" id="varianceCard">
+      <div class="ic-title">Explained Variance by Component</div>
+      <div class="var-bar-wrap" id="varBars"></div>
+    </div>
+    <div class="info-card" id="iforestInfoCard">
+      <div class="ic-title">IForest Info</div>
+      <div class="ic-row"><span class="ic-key">IF Threshold</span><span class="ic-val" id="ic-if-thr">–</span></div>
+      <div class="ic-row"><span class="ic-key">Anomaly Rate</span><span class="ic-val red" id="ic-if-rate">–</span></div>
+      <div class="ic-row"><span class="ic-key">Both Detected</span><span class="ic-val red" id="ic-both">–</span></div>
+    </div>
+  </div>
+
+  <!-- ── Per-feature mode: feature selector ────────────────── -->
   <div class="feature-row hidden" id="featureRow">
     <label for="featureSelect">Feature:</label>
     <select id="featureSelect" onchange="onFeatureChange()"></select>
@@ -525,11 +630,11 @@
 
   <!-- ── Chart card ──────────────────────────────────────────── -->
   <div class="chart-card">
-    <canvas id="aeChart"></canvas>
+    <canvas id="pcaChart"></canvas>
   </div>
 
   <!-- ── Custom tooltip ──────────────────────────────────────── -->
-  <div class="ae-tooltip" id="aeTooltip"></div>
+  <div class="pca-tooltip" id="pcaTooltip"></div>
 
   <!-- ── Anomaly table ─────────────────────────────────────── -->
   <div class="table-section">
@@ -537,20 +642,21 @@
       <h3>Anomaly Details</h3>
       <span class="badge-count" id="tableCount">0</span>
     </div>
-    <table class="ae-table" id="aeTable">
+    <table class="pca-table" id="pcaTable">
       <thead>
-        <tr>
+        <tr id="tableHead">
           <th>Time</th>
           <th>Detection Type</th>
-          <th>Feature</th>
-          <th>Error</th>
+          <th>Feature / Root</th>
+          <th>PCA Score</th>
           <th>Threshold</th>
           <th>Severity</th>
+          <th>IForest</th>
           <th>Explanation</th>
         </tr>
       </thead>
-      <tbody id="aeTableBody">
-        <tr><td colspan="7" class="no-data">Loading data…</td></tr>
+      <tbody id="pcaTableBody">
+        <tr><td colspan="8" class="no-data">Loading data…</td></tr>
       </tbody>
     </table>
   </div>
@@ -562,7 +668,7 @@
     <div id="chat-header">MindTwin AI Assistant</div>
     <div id="chat-messages"></div>
     <div id="chat-input-area">
-      <input id="chat-input" placeholder="Ask about anomalies..." />
+      <input id="chat-input" placeholder="Ask about PCA anomalies..." />
       <button id="send-btn">Send</button>
     </div>
   </div>
@@ -571,15 +677,15 @@
     // ================================================================
     // STATE
     // ================================================================
-    let allData      = null;   // raw JSON from /api/autoencoder/results
-    let currentMode  = 'multiple';
+    let allData       = null;   // raw JSON from /api/pca/results
+    let currentMode   = 'overall';
     let currentFeature = null;
-    let liveMode     = true;
-    let liveTimer    = null;
-    let liveIndex    = 0;
-    let liveDataset  = [];     // the full array for current view
+    let liveMode      = true;
+    let liveTimer     = null;
+    let liveIndex     = 0;
+    let liveDataset   = [];    // the full array for current view
 
-    const LIVE_INTERVAL_MS = 1000;  // 1 saniyede bir nokta (saniye saniye ilerlesin)
+    const LIVE_INTERVAL_MS = 80;  // fast replay — 80ms per point
 
     // Chart.js instance
     let chart = null;
@@ -587,7 +693,7 @@
     // ================================================================
     // CHART SETUP
     // ================================================================
-    const ctx = document.getElementById('aeChart').getContext('2d');
+    const ctx = document.getElementById('pcaChart').getContext('2d');
 
     function createChart() {
       if (chart) { chart.destroy(); chart = null; }
@@ -609,10 +715,9 @@
                 callback: function(value) {
                   const val = Math.round(value);
                   if (val < 0) return '';
-                  // Find the data point in the active dataset
                   const d = liveDataset.find(item => item.frame_no === val);
                   if (d) {
-                    const t = d.timestamp.split('.')[0];
+                    const t = (d.timestamp || '').split('.')[0];
                     return `F${val} (${t})`;
                   }
                   return `F${val}`;
@@ -634,10 +739,9 @@
         }
       });
 
-      // Custom tooltip via mousemove
-      document.getElementById('aeChart').addEventListener('mousemove', handleMouseMove);
-      document.getElementById('aeChart').addEventListener('mouseleave', () => {
-        document.getElementById('aeTooltip').style.display = 'none';
+      document.getElementById('pcaChart').addEventListener('mousemove', handleMouseMove);
+      document.getElementById('pcaChart').addEventListener('mouseleave', () => {
+        document.getElementById('pcaTooltip').style.display = 'none';
       });
     }
 
@@ -647,7 +751,7 @@
     function handleMouseMove(evt) {
       if (!chart) return;
       const points = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: false }, true);
-      const tip = document.getElementById('aeTooltip');
+      const tip = document.getElementById('pcaTooltip');
 
       if (!points.length) { tip.style.display = 'none'; return; }
 
@@ -659,28 +763,37 @@
 
       if (!rawPoint || dsIndex === 1) { tip.style.display = 'none'; return; }  // skip threshold line
 
-      const isAnom = rawPoint.is_anomaly;
-      const sevRatio = (rawPoint.severity_ratio || 0).toFixed(3);
-      const dist = (rawPoint.threshold_distance || 0).toFixed(4);
+      const isAnom   = rawPoint.is_anomaly || rawPoint.pca_anomaly;
+      const score    = rawPoint.pca_score   || rawPoint.feature_error || 0;
+      const thr      = rawPoint.pca_threshold || rawPoint.feat_threshold || 0;
+      const ratio    = rawPoint.severity_ratio || 0;
+      const dist     = rawPoint.threshold_distance || (score - thr);
+      const ifAnom   = rawPoint.iforest_anomaly;
+      const ifScore  = rawPoint.iforest_score;
 
-      let html = `<div class="tt-time">🕐 Frame ${rawPoint.frame_no} | ${rawPoint.timestamp}</div><hr>`;
-      html += `<div class="tt-row"><span class="tt-key">Error</span><span class="tt-val ${isAnom ? 'anomaly' : 'ok'}">${(rawPoint.error||0).toFixed(4)}</span></div>`;
-      html += `<div class="tt-row"><span class="tt-key">Threshold</span><span class="tt-val">${(rawPoint.threshold||0).toFixed(4)}</span></div>`;
+      let html = `<div class="tt-time">🕐 Frame ${rawPoint.frame_no} | ${rawPoint.timestamp || '–'}</div><hr>`;
+      html += `<div class="tt-row"><span class="tt-key">PCA Score</span><span class="tt-val ${isAnom ? 'anomaly' : 'ok'}">${score.toFixed(5)}</span></div>`;
+      html += `<div class="tt-row"><span class="tt-key">Threshold</span><span class="tt-val">${thr.toFixed(5)}</span></div>`;
 
       if (isAnom) {
-        html += `<div class="tt-row"><span class="tt-key">Thr. Distance</span><span class="tt-val anomaly">+${dist}</span></div>`;
-        html += `<div class="tt-row"><span class="tt-key">Severity Ratio</span><span class="tt-val anomaly">${sevRatio}×</span></div>`;
+        html += `<div class="tt-row"><span class="tt-key">Thr. Distance</span><span class="tt-val anomaly">+${Math.abs(dist).toFixed(5)}</span></div>`;
+        html += `<div class="tt-row"><span class="tt-key">Severity Ratio</span><span class="tt-val anomaly">${ratio.toFixed(3)}×</span></div>`;
       }
 
-      if (currentMode === 'multiple' && rawPoint.root_cause) {
-        html += `<hr><div class="tt-cause">⚠ Root Cause: ${rawPoint.root_cause}</div>`;
+      if (ifScore !== undefined && ifScore !== null) {
+        html += `<hr><div class="tt-row"><span class="tt-key">IForest Score</span><span class="tt-val ${ifAnom ? 'anomaly' : 'info'}">${ifScore.toFixed(5)}</span></div>`;
+        html += `<div class="tt-row"><span class="tt-key">IForest Anomaly</span><span class="tt-val ${ifAnom ? 'anomaly' : 'ok'}">${ifAnom ? '⚠ Yes' : '✓ No'}</span></div>`;
+      }
+
+      if (currentMode === 'overall' && rawPoint.worst_feature) {
+        html += `<hr><div class="tt-cause">⚠ Worst Feature: ${rawPoint.worst_feature}</div>`;
         if (rawPoint.explanation) html += `<div class="tt-cause" style="color:#aaa;">${rawPoint.explanation}</div>`;
       }
 
-      if (currentMode === 'single' && rawPoint.feature) {
-        html += `<hr><div class="tt-cause">Feature: ${rawPoint.feature}</div>`;
+      if (currentMode === 'feature') {
+        if (rawPoint.feature) html += `<hr><div class="tt-cause">Feature: ${rawPoint.feature}</div>`;
         if (rawPoint.direction) html += `<div class="tt-cause" style="color:#aaa;">Direction: ${rawPoint.direction === 'high' ? '↑ Above normal' : '↓ Below normal'}</div>`;
-        if (rawPoint.explanation) html += `<div class="tt-cause" style="color:#aaa;">${rawPoint.explanation}</div>`;
+        if (rawPoint.explanation && isAnom) html += `<div class="tt-cause" style="color:#aaa;">${rawPoint.explanation}</div>`;
       }
 
       if (!isAnom) html += `<div class="tt-cause" style="color:#22c55e;">✓ Normal operation</div>`;
@@ -688,12 +801,11 @@
       tip.innerHTML = html;
       tip.style.display = 'block';
 
-      // Position tooltip near cursor, avoid edges
       const margin = 12;
       let tx = evt.clientX + margin;
       let ty = evt.clientY + margin;
-      if (tx + 290 > window.innerWidth)  tx = evt.clientX - 290 - margin;
-      if (ty + 200 > window.innerHeight) ty = evt.clientY - 200 - margin;
+      if (tx + 310 > window.innerWidth)  tx = evt.clientX - 310 - margin;
+      if (ty + 220 > window.innerHeight) ty = evt.clientY - 220 - margin;
       tip.style.left = tx + 'px';
       tip.style.top  = ty + 'px';
     }
@@ -703,66 +815,103 @@
     // ================================================================
     async function loadData() {
       try {
-        const res = await fetch('/api/autoencoder/results', { cache: 'no-store' });
+        const res = await fetch('/api/pca/results', { cache: 'no-store' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         allData = await res.json();
 
-        // Augment with frame numbers
-        if (allData.multiple) {
-          allData.multiple.forEach((d, idx) => {
-            d.frame_no = idx;
+        // Augment frame numbers
+        if (allData.overall) {
+          allData.overall.forEach((d, idx) => {
+            if (d.frame_no === undefined) d.frame_no = idx;
           });
         }
-        if (allData.single) {
-          Object.keys(allData.single).forEach(feat => {
-            allData.single[feat].forEach((d, idx) => {
-              d.frame_no = idx;
+        if (allData.per_feature) {
+          Object.keys(allData.per_feature).forEach(feat => {
+            allData.per_feature[feat].forEach((d, idx) => {
+              if (d.frame_no === undefined) d.frame_no = idx;
             });
           });
         }
 
         const meta = allData.meta || {};
         document.getElementById('statSource').textContent =
-          meta.generated_at === 'demo' ? 'Demo Data' :
-          meta.generated_at ? 'Pipeline Output' : 'Loaded';
-        document.getElementById('statSource').className =
-          'value ' + (meta.generated_at === 'demo' ? '' : 'green');
+          meta.generated_at ? 'Pipeline Output' : 'Demo';
+        document.getElementById('statSource').className = 'value green';
+
+        // Populate model info panel
+        populateInfoPanel(meta);
 
         populateFeatureDropdown();
         renderCurrentView(true);
 
       } catch (e) {
-        console.error('[autoencoder] Load error:', e);
+        console.error('[pca] Load error:', e);
         document.getElementById('statSource').textContent = 'Error loading';
         document.getElementById('statSource').className = 'value red';
-        document.getElementById('aeTableBody').innerHTML =
-          '<tr><td colspan="7" class="no-data">Could not load data from /api/autoencoder/results.<br>Make sure the backend is running.</td></tr>';
+        document.getElementById('pcaTableBody').innerHTML =
+          '<tr><td colspan="8" class="no-data">Could not load data from /api/pca/results.<br>Run <code>models/stats/export_pca_results.py</code> first.</td></tr>';
       }
     }
 
     // ================================================================
-    // FEATURE DROPDOWN (single mode)
+    // INFO PANEL
+    // ================================================================
+    function populateInfoPanel(meta) {
+      const safeVal = (v, decimals) => (v !== null && v !== undefined)
+        ? (typeof v === 'number' ? v.toFixed(decimals) : v)
+        : '–';
+
+      document.getElementById('ic-ncomp').textContent   = safeVal(meta.n_components, 0);
+      document.getElementById('ic-thr').textContent     = safeVal(meta.threshold, 6);
+      document.getElementById('ic-q').textContent       = meta.quantile ? `${(meta.quantile * 100).toFixed(1)}%` : '–';
+      document.getElementById('ic-samples').textContent = safeVal(meta.training_samples, 0);
+      document.getElementById('ic-dim').textContent     = safeVal(meta.feature_dim, 0);
+      document.getElementById('statComponents').textContent = safeVal(meta.n_components, 0);
+      document.getElementById('statVariance').textContent =
+        meta.total_variance_explained ? `${(meta.total_variance_explained * 100).toFixed(1)}%` : '–';
+
+      // IForest
+      document.getElementById('ic-if-thr').textContent = safeVal(meta.iforest_threshold, 6);
+
+      // Variance bars
+      const evr = meta.explained_variance_ratio || [];
+      const barsDiv = document.getElementById('varBars');
+      barsDiv.innerHTML = '';
+      evr.forEach((v, i) => {
+        const pct = (v * 100).toFixed(1);
+        barsDiv.innerHTML += `
+          <div class="var-bar-row">
+            <span class="var-bar-label">PC${i + 1}</span>
+            <div class="var-bar-track">
+              <div class="var-bar-fill" style="width:${pct}%"></div>
+            </div>
+            <span class="var-bar-pct">${pct}%</span>
+          </div>`;
+      });
+    }
+
+    // ================================================================
+    // FEATURE DROPDOWN (per-feature mode)
     // ================================================================
     function populateFeatureDropdown() {
-      if (!allData || !allData.single) return;
+      if (!allData || !allData.per_feature) return;
       const sel = document.getElementById('featureSelect');
       sel.innerHTML = '';
-      const features = allData.meta && allData.meta.features
-        ? allData.meta.features
-        : Object.keys(allData.single);
+      const features = allData.meta && allData.meta.feature_columns
+        ? allData.meta.feature_columns
+        : Object.keys(allData.per_feature);
 
       features.forEach(f => {
-        const rows = (allData.single[f] || []).length;
-        const anomCount = (allData.single[f] || []).filter(r => r.is_anomaly).length;
+        const rows      = (allData.per_feature[f] || []).length;
+        const anomCount = (allData.per_feature[f] || []).filter(r => r.is_anomaly).length;
         const opt = document.createElement('option');
         opt.value = f;
         opt.textContent = anomCount > 0 ? `${f}  ⚠ ${anomCount} anomaly` : `${f}  (${rows} pts)`;
         sel.appendChild(opt);
       });
 
-      // Default to feature with most data points (prefer one with anomalies)
-      const withAnom = features.find(f => (allData.single[f] || []).some(r => r.is_anomaly));
-      const withData = withAnom || features.find(f => (allData.single[f] || []).length > 0) || features[0];
+      const withAnom = features.find(f => (allData.per_feature[f] || []).some(r => r.is_anomaly));
+      const withData = withAnom || features[0];
       if (withData) sel.value = withData;
       currentFeature = sel.value;
     }
@@ -778,14 +927,18 @@
     function switchMode(mode) {
       currentMode = mode;
 
-      document.getElementById('tabMultiple').classList.toggle('active', mode === 'multiple');
-      document.getElementById('tabSingle').classList.toggle('active', mode === 'single');
-      document.getElementById('featureRow').classList.toggle('hidden', mode === 'multiple');
-      document.getElementById('statMode').textContent = mode === 'multiple' ? 'Multiple' : 'Single';
+      document.getElementById('tabOverall').classList.toggle('active', mode === 'overall');
+      document.getElementById('tabFeature').classList.toggle('active', mode === 'feature');
+      document.getElementById('featureRow').classList.toggle('hidden', mode === 'overall');
+      document.getElementById('statMode').textContent = mode === 'overall' ? 'Overall' : 'Per-Feature';
+
+      // Toggle IForest column in table header
+      const th7 = document.querySelectorAll('#tableHead th')[6];
+      if (th7) th7.style.display = mode === 'overall' ? '' : 'none';
 
       if (chart) {
         chart.options.scales.y.title.text =
-          mode === 'multiple' ? 'Reconstruction Error' : 'Feature Max Error';
+          mode === 'overall' ? 'PCA Reconstruction Error' : 'Feature Reconstruction Error';
       }
 
       stopLive();
@@ -797,30 +950,36 @@
     // ================================================================
     function getActiveData() {
       if (!allData) return [];
-      if (currentMode === 'multiple') {
-        return (allData.multiple || []);
+      if (currentMode === 'overall') {
+        return (allData.overall || []);
       } else {
         const feat = currentFeature || document.getElementById('featureSelect').value;
-        return (allData.single && allData.single[feat]) ? allData.single[feat] : [];
+        return (allData.per_feature && allData.per_feature[feat]) ? allData.per_feature[feat] : [];
       }
     }
 
-    function buildChartDatasets(dataSlice) {
-      // Main error line — object arrays mapped by {x: frame_no, y: value} for linear scale
-      const normalPoints = dataSlice.map(d => ({
-        x: d.frame_no,
-        y: d.is_anomaly ? null : d.error
-      }));
-      const anomalyPoints = dataSlice.map(d => ({
-        x: d.frame_no,
-        y: d.is_anomaly ? d.error : null
-      }));
-      const thresholdPoints = dataSlice.map(d => ({
-        x: d.frame_no,
-        y: d.threshold
-      }));
+    function getScore(d) {
+      return currentMode === 'overall'
+        ? (d.pca_score || 0)
+        : (d.feature_error || d.pca_score || 0);
+    }
 
-      const errorLabel = currentMode === 'multiple' ? 'Reconstruction Error' : `${currentFeature} Error`;
+    function getThreshold(d) {
+      return currentMode === 'overall'
+        ? (d.pca_threshold || 0)
+        : (d.feat_threshold || d.pca_threshold || 0);
+    }
+
+    function isAnomaly(d) {
+      return d.is_anomaly || d.pca_anomaly || false;
+    }
+
+    function buildChartDatasets(dataSlice) {
+      const normalPoints  = dataSlice.map(d => ({ x: d.frame_no, y: isAnomaly(d) ? null : getScore(d) }));
+      const anomalyPoints = dataSlice.map(d => ({ x: d.frame_no, y: isAnomaly(d) ? getScore(d) : null }));
+      const thresholdPts  = dataSlice.map(d => ({ x: d.frame_no, y: getThreshold(d) }));
+
+      const errorLabel = currentMode === 'overall' ? 'PCA Recon. Error' : `${currentFeature} Error`;
 
       const normalDs = {
         label: errorLabel,
@@ -854,7 +1013,7 @@
 
       const thresholdDs = {
         label: 'Threshold',
-        data: thresholdPoints,
+        data: thresholdPts,
         borderColor: '#ef4444',
         borderDash: [6, 4],
         borderWidth: 1.5,
@@ -874,19 +1033,25 @@
       if (!allData) return;
 
       liveDataset = getActiveData();
-      const meta = allData.meta || {};
+      const meta  = allData.meta || {};
 
-      const thr = liveDataset.length ? liveDataset[0].threshold : (
-        currentMode === 'multiple'
-          ? (meta.multiple_threshold || '–')
-          : (meta.single_threshold || '–')
-      );
-      document.getElementById('statThr').textContent = typeof thr === 'number' ? thr.toFixed(4) : thr;
+      const thrVal = liveDataset.length ? getThreshold(liveDataset[0]) : (meta.threshold || '–');
+      document.getElementById('statThr').textContent =
+        typeof thrVal === 'number' ? thrVal.toFixed(5) : thrVal;
 
-      // Feature badge (single mode)
-      if (currentMode === 'single') {
+      // IForest rates
+      if (currentMode === 'overall' && liveDataset.length) {
+        const ifAnomCount = liveDataset.filter(d => d.iforest_anomaly).length;
+        const bothCount   = liveDataset.filter(d => d.pca_anomaly && d.iforest_anomaly).length;
+        document.getElementById('ic-if-rate').textContent =
+          liveDataset.length ? `${((ifAnomCount / liveDataset.length) * 100).toFixed(1)}%` : '–';
+        document.getElementById('ic-both').textContent = bothCount;
+      }
+
+      // Feature badge (per-feature mode)
+      if (currentMode === 'feature') {
         const feat = currentFeature || document.getElementById('featureSelect').value;
-        const fa = (allData.single[feat] || []).filter(d => d.is_anomaly).length;
+        const fa = (allData.per_feature[feat] || []).filter(d => d.is_anomaly).length;
         document.getElementById('featureAnomalyBadge').textContent =
           `${fa} anomal${fa === 1 ? 'y' : 'ies'}`;
         document.getElementById('featureAnomalyBadge').style.borderColor =
@@ -898,8 +1063,7 @@
       if (liveMode) {
         startLive();
       } else {
-        // Full dataset stats and table when not in live mode
-        const anomalies = liveDataset.filter(d => d.is_anomaly);
+        const anomalies = liveDataset.filter(d => isAnomaly(d));
         document.getElementById('statTotal').textContent = liveDataset.length.toLocaleString();
         document.getElementById('statAnom').textContent  = anomalies.length.toLocaleString();
         renderAll(liveDataset);
@@ -910,23 +1074,19 @@
     function renderAll(data) {
       createChart();
       if (!data.length) {
-        const msg = currentMode === 'single'
-          ? `This feature had no top-error readings in the test data.<br><span style="color:#666;font-size:0.82rem">Select a different feature from the dropdown above.</span>`
+        const msg = currentMode === 'feature'
+          ? `This feature had no anomaly readings.<br><span style="color:#666;font-size:0.82rem">Select a different feature from the dropdown above.</span>`
           : 'No data available for this view.';
-        document.getElementById('aeTableBody').innerHTML =
-          `<tr><td colspan="7" class="no-data">${msg}</td></tr>`;
-        // Show empty chart placeholder
+        document.getElementById('pcaTableBody').innerHTML =
+          `<tr><td colspan="8" class="no-data">${msg}</td></tr>`;
         chart.data.datasets = [];
         chart.update('none');
         return;
       }
       const built = buildChartDatasets(data);
       chart.data.datasets = built.datasets;
-      // Set X scale min and max to encompass the full static dataset
-      const minFrame = data[0].frame_no;
-      const maxFrame = data[data.length - 1].frame_no;
-      chart.options.scales.x.min = minFrame;
-      chart.options.scales.x.max = maxFrame;
+      chart.options.scales.x.min = data[0].frame_no;
+      chart.options.scales.x.max = data[data.length - 1].frame_no;
       chart.update('none');
     }
 
@@ -941,7 +1101,7 @@
 
       liveIndex = 0;
       createChart();
-      const errorLabel = currentMode === 'multiple' ? 'Reconstruction Error' : `${currentFeature} Error`;
+      const errorLabel = currentMode === 'overall' ? 'PCA Recon. Error' : `${currentFeature} Error`;
       chart.data.datasets = [
         { label: errorLabel, data: [], borderColor: '#4da6ff', backgroundColor: 'rgba(77,166,255,0.08)',
           pointBackgroundColor: '#4da6ff', pointRadius: 2, pointHoverRadius: 5, borderWidth: 1.5, tension: 0.2,
@@ -953,8 +1113,7 @@
       ];
       chart.update('none');
 
-      const indicator = document.getElementById('liveIndicator');
-      indicator.classList.add('on');
+      document.getElementById('liveIndicator').classList.add('on');
 
       const wsUrl = `ws://${location.host}/ws/torque`;
       liveWs = new WebSocket(wsUrl);
@@ -979,26 +1138,25 @@
           liveIndex++;
           updated = true;
 
-          // Normal line
-          chart.data.datasets[0].data.push({ x: d.frame_no, y: d.is_anomaly ? null : d.error });
+          const score = getScore(d);
+          const thr   = getThreshold(d);
+          const anom  = isAnomaly(d);
+
+          chart.data.datasets[0].data.push({ x: d.frame_no, y: anom ? null : score });
           chart.data.datasets[0].rawPoints.push(d);
-
-          // Threshold
-          chart.data.datasets[1].data.push({ x: d.frame_no, y: d.threshold });
-
-          // Anomaly scatter
-          chart.data.datasets[2].data.push({ x: d.frame_no, y: d.is_anomaly ? d.error : null });
+          chart.data.datasets[1].data.push({ x: d.frame_no, y: thr });
+          chart.data.datasets[2].data.push({ x: d.frame_no, y: anom ? score : null });
           chart.data.datasets[2].rawPoints.push(d);
 
-          // Sliding window: keep last 80 points visible on X scale bounds
-          chart.options.scales.x.min = Math.max(d.frame_no - 80 + 1, 0);
+          // Sliding window: keep last 120 points
+          chart.options.scales.x.min = Math.max(d.frame_no - 120 + 1, 0);
           chart.options.scales.x.max = d.frame_no;
 
-          // Housekeeping: prevent memory footprint growth
-          if (chart.data.datasets[0].data.length > 160) {
+          // Housekeeping
+          if (chart.data.datasets[0].data.length > 240) {
             chart.data.datasets.forEach(ds => {
-              if (ds.data.length > 160) ds.data.shift();
-              if (ds.rawPoints && ds.rawPoints.length > 160) ds.rawPoints.shift();
+              if (ds.data.length > 240) ds.data.shift();
+              if (ds.rawPoints && ds.rawPoints.length > 240) ds.rawPoints.shift();
             });
           }
         }
@@ -1006,16 +1164,12 @@
         if (updated) {
           chart.update('none');
 
-          // --- Progressive Stats and Table Update ---
-          const playedDataset = liveDataset.slice(0, liveIndex);
-          const playedAnomalies = playedDataset.filter(x => x.is_anomaly);
-
-          // Update stats bar values for the played portion
-          document.getElementById('statTotal').textContent = playedDataset.length.toLocaleString();
-          document.getElementById('statAnom').textContent  = playedAnomalies.length.toLocaleString();
-
-          // Update details table to only show anomalies up to the current frame
-          renderTable(playedAnomalies);
+          // Progressive stats and table
+          const played   = liveDataset.slice(0, liveIndex);
+          const playedAn = played.filter(x => isAnomaly(x));
+          document.getElementById('statTotal').textContent = played.length.toLocaleString();
+          document.getElementById('statAnom').textContent  = playedAn.length.toLocaleString();
+          renderTable(playedAn);
         }
 
         if (liveIndex >= liveDataset.length) {
@@ -1032,7 +1186,6 @@
 
     function replayLive() {
       if (!liveMode) {
-        // Quick visual replay even if live mode is off
         document.getElementById('liveModeToggle').checked = true;
         liveMode = true;
         document.getElementById('liveIndicator').classList.add('on');
@@ -1042,7 +1195,7 @@
 
     document.getElementById('liveModeToggle').addEventListener('change', function () {
       liveMode = this.checked;
-      localStorage.setItem('mindtwin_ae_live_mode', liveMode);
+      localStorage.setItem('mindtwin_live_mode', liveMode);
       if (!liveMode) {
         stopLive();
         location.reload();
@@ -1055,40 +1208,48 @@
     // TABLE
     // ================================================================
     function renderTable(anomalies) {
-      const tbody = document.getElementById('aeTableBody');
+      const tbody = document.getElementById('pcaTableBody');
       document.getElementById('tableCount').textContent = anomalies.length;
 
       if (!anomalies.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="no-data">No anomalies detected in this view.</td></tr>';
+        const cols = currentMode === 'overall' ? 8 : 7;
+        tbody.innerHTML = `<tr><td colspan="${cols}" class="no-data">No anomalies detected in this view.</td></tr>`;
         return;
       }
 
-      const type = currentMode === 'multiple' ? 'Multiple' : 'Single';
-      const typeClass = currentMode === 'multiple' ? 'td-type-multi' : 'td-type-single';
+      const type      = currentMode === 'overall' ? 'Overall PCA' : 'Per-Feature';
+      const typeClass = currentMode === 'overall' ? 'td-type-overall' : 'td-type-feature';
 
       // Sort newest first (highest frame_no on top)
       const sorted = anomalies.slice().sort((a, b) => (b.frame_no || 0) - (a.frame_no || 0));
 
       tbody.innerHTML = sorted.map(a => {
-        const sev = a.severity_ratio;
-        const sevTxt = sev >= 3 ? 'CRITICAL' : sev >= 1.5 ? 'HIGH' : sev >= 1.0 ? 'MEDIUM' : 'LOW';
-        const sevCls = sev >= 3 ? 'td-sev-high' : sev >= 1.5 ? 'td-sev-high' : sev >= 1.0 ? 'td-sev-med' : 'td-sev-low';
-        const feature = a.root_cause || a.feature || '–';
+        const score    = getScore(a);
+        const thr      = getThreshold(a);
+        const ratio    = a.severity_ratio || (thr > 0 ? score / thr : 0);
+        const sevTxt   = ratio >= 3 ? 'CRITICAL' : ratio >= 1.5 ? 'HIGH' : ratio >= 1.0 ? 'MEDIUM' : 'LOW';
+        const sevCls   = ratio >= 1.5 ? 'td-sev-high' : ratio >= 1.0 ? 'td-sev-med' : 'td-sev-low';
+        const feature  = a.worst_feature || a.feature || '–';
+        const ifAnom   = a.iforest_anomaly;
+        const ifCell   = currentMode === 'overall'
+          ? `<td class="${ifAnom ? 'td-iforest-yes' : 'td-iforest-no'}">${ifAnom ? '⚠ Yes' : '–'}</td>`
+          : '';
 
         return `<tr>
           <td class="td-time">F${a.frame_no} (${a.timestamp || '–'})</td>
           <td class="${typeClass}">${type}</td>
           <td class="td-feature">${feature}</td>
-          <td class="td-error">${(a.error||0).toFixed(4)}</td>
-          <td class="td-thr">${(a.threshold||0).toFixed(4)}</td>
-          <td class="${sevCls}">${sevTxt} (${(sev||0).toFixed(2)}×)</td>
+          <td class="td-score">${score.toFixed(5)}</td>
+          <td class="td-thr">${thr.toFixed(5)}</td>
+          <td class="${sevCls}">${sevTxt} (${ratio.toFixed(2)}×)</td>
+          ${ifCell}
           <td class="td-explain">${a.explanation || '–'}</td>
         </tr>`;
       }).join('');
     }
 
     // ================================================================
-    // CHAT BOT (identical to other pages)
+    // CHAT BOT
     // ================================================================
     const chatToggle = document.getElementById('chat-toggle');
     const chatbot    = document.getElementById('chatbot');
@@ -1125,14 +1286,14 @@
     // INIT
     // ================================================================
     createChart();
-    
+
     // Read live mode state from localStorage, default to true
-    const savedLiveMode = localStorage.getItem('mindtwin_ae_live_mode');
+    const savedLiveMode = localStorage.getItem('mindtwin_live_mode');
     if (savedLiveMode !== null) {
       liveMode = savedLiveMode === 'true';
       document.getElementById('liveModeToggle').checked = liveMode;
     }
-    
+
     loadData();
   </script>
 

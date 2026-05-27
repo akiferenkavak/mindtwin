@@ -39,6 +39,10 @@
       padding: 2rem;
       transition: transform 0.2s ease, box-shadow 0.2s ease;
       cursor: pointer;
+      height: 100%;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
     }
 
     .card:hover {
@@ -55,6 +59,7 @@
       color: #aaa;
       font-size: 0.95rem;
       line-height: 1.5;
+      flex-grow: 1;
     }
 
     .icon {
@@ -66,6 +71,11 @@
     a {
       text-decoration: none;
       color: inherit;
+    }
+    
+    main > a {
+      display: block;
+      height: 100%;
     }
   </style>
 </head>
@@ -79,6 +89,7 @@
     <a href="/torque" style="color:#945151;text-decoration:none;font-weight:600;">Torque</a>
     <a href="/events" style="color:#945151;text-decoration:none;font-weight:600;">Events</a>
     <a href="/autoencoder" style="color:#945151;text-decoration:none;font-weight:600;">Autoencoder</a>
+    <a href="/pca" style="color:#945151;text-decoration:none;font-weight:600;">PCA</a>
   </nav>
 </header>
 
@@ -97,7 +108,7 @@
   <a href="/torque">
     <div class="card">
       <div class="icon"></div>
-      <h2>Torque Anomaly Monitor</h2>
+      <h2>Torque Monitor</h2>
       <p>
         Joint-level torque comparison against ideal values.
         Early detection of mechanical anomalies.
@@ -112,6 +123,17 @@
       <p>
         Neural autoencoder-based detection across all sensor features.
         Multiple and single-feature anomaly analysis.
+      </p>
+    </div>
+  </a>
+
+  <a href="/pca">
+    <div class="card">
+      <div class="icon"></div>
+      <h2>PCA Anomaly Detection</h2>
+      <p>
+        PCA reconstruction error-based anomaly detection.
+        Overall and per-feature analysis with live visualization.
       </p>
     </div>
   </a>

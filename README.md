@@ -251,8 +251,8 @@ Provides natural language interaction, graph explanations, event summaries, and 
 
 <img width="380" height="540" alt="image" src="https://github.com/user-attachments/assets/d51f3b7c-3ca6-4bc1-804d-ca17f2feb3d9" />
 
-
-
+![alt text](image.png)
+![alt text](image-1.png)
 
 
 ---

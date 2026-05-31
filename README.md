@@ -1,125 +1,262 @@
 # MindTwin
 
-**MindTwin** is a lightweight digital twin–based monitoring system designed for industrial robots.  
-The system enables **real-time replay and visualization of torque and thermal data** using user-provided CSV files.
+**MindTwin** is an AI-powered digital twin platform designed for industrial robot monitoring, anomaly detection, and predictive maintenance.
 
-Instead of relying on simulated or hardcoded signals, MindTwin works directly with **real operational data**, allowing users to analyze anomalies under realistic conditions.
-
----
-
-## 🚀 Key Features
-
-- 📊 **CSV-based data ingestion**  
-  Load torque and thermal data directly from CSV files (e.g., exported robot logs).
-
-- ☁️ **Google Drive integration**  
-  CSV files can be selected directly from Google Drive (via Drive for Desktop), enabling seamless use of shared or cloud-stored datasets.
-
-- ⏱ **Real-time replay**  
-  Logged data is streamed frame-by-frame to simulate live operation.
-
-- 🌡 **Thermal monitoring**  
-  Min / mean / max temperature values are computed on the fly and visualized in the Thermal UI.
-
-- ⚙️ **Torque monitoring**  
-  Joint-level torque deviations are detected and visualized in real time.
-
-- 🚨 **Event & anomaly logging**  
-  Detected anomalies are logged and displayed instantly in the Events dashboard.
+The platform combines real-time robot telemetry, thermal monitoring, MATLAB-based simulation, machine learning-based anomaly detection, automated event management, and an intelligent AI assistant called **KUKA AI**. By integrating multiple anomaly detection models within a unified monitoring environment, MindTwin enables users to detect, analyze, and interpret abnormal robot behavior more effectively.
 
 ---
 
-## 🧠 System Overview
+# 🚀 Core Innovation
 
-MindTwin follows a simple producer–consumer architecture:
+The primary contribution of MindTwin is the integration of multiple anomaly detection models, simulation-supported analysis, and AI-assisted interpretation into a single intelligent monitoring framework.
 
-- **Producers**
-  - Read CSV files (thermal or torque data)
-  - Stream data as JSON frames over TCP
+Unlike conventional monitoring systems that rely on a single anomaly detection approach, MindTwin evaluates robot behavior using:
 
-- **Consumer (Backend)**
-  - Receives streamed data
-  - Detects anomalies based on thresholds
-  - Serves live data to the web UI using FastAPI & WebSockets
+* PCA (Principal Component Analysis)
+* Autoencoder
+* Random Forest
 
-- **Web UI**
-  - Thermal dashboard
-  - Torque dashboard
-  - Events & anomaly log
+Each model analyzes the same telemetry data independently and contributes to the overall anomaly assessment process.
 
----
+### Model Agreement Analysis
 
-## 📁 Data Input
+To improve anomaly detection reliability, the platform evaluates how many models simultaneously identify abnormal behavior.
 
-- Supported format: **CSV**
-- Data source: **User-provided files**
-- Typical workflow:
-  1. Store CSV files locally or in Google Drive
-  2. Select the desired file via file picker
-  3. Replay data in real time through the UI
+* 1 = One model detects an anomaly
+* 2 = Two models detect an anomaly
+* 3 = All models detect an anomaly
 
-This design allows MindTwin to work with **any custom dataset**, without modifying the backend code.
+This approach helps distinguish isolated detections from strongly supported anomalies.
 
 ---
 
-## 🛠 Tech Stack
+# 🧠 Key Features
 
-- **Backend:** Python, FastAPI, Uvicorn
-- **Streaming:** TCP sockets
-- **Frontend:** HTML, JavaScript
-- **Data:** CSV-based logs
-- **Deployment:** Localhost (research & prototyping oriented)
-
----
-
-## 🎯 Use Cases
-
-- Digital twin prototyping
-- Offline analysis of robot logs
-- Anomaly detection experiments
-- Academic and industrial demonstrations
-
----
-
-## 📌 Notes
-
-MindTwin is designed as a **flexible research and demonstration tool**.  
-Thresholds, data sources, and replay speed can be easily adapted to different experimental setups.
+* 📊 Real-time thermal monitoring
+* ⚙️ Real-time torque monitoring
+* 📥 CSV-based data injection and replay
+* 🧠 PCA-based anomaly detection
+* 🤖 Autoencoder-based anomaly detection
+* 🌲 Random Forest-based torque behavior modeling
+* 🔬 MATLAB-based simulation support
+* 📈 Real vs simulated behavior comparison
+* 🚨 Automated anomaly event generation
+* 📋 Centralized event management system
+* 📈 Live dashboard visualization
+* 🔍 Axis-based model agreement analysis
+* 💬 KUKA AI chatbot integration
+* 📉 Explain This Graph functionality
+* 📝 Event Summary generation
+* 🛠 AI-powered maintenance recommendations
 
 ---
 
-## 📂 Sample Datasets (Google Drive)
+# 🏗️ System Architecture
 
-Example torque and thermal datasets used in this project are available on Google Drive:
+### Data Injection Layer
 
-🔗 **Google Drive Dataset Folder**  
-https://drive.google.com/drive/folders/129q4hMMzVhQVXE9V8ysXHIrQGuOcl5sH
+* Robot telemetry datasets
+* Thermal monitoring datasets
+* CSV-based replay mechanism
+* Real-time data streaming
 
-**Recommended file:**  
-`kuka_log600_scnd_20hz (çanta kaldırıldı yerine koyuldu).csv`
+### Machine Learning Layer
 
-This CSV file can be used for **both torque and thermal monitoring**, as it contains
-the required torque and motor temperature columns.
+* PCA
+* Autoencoder
+* Random Forest
 
-These CSV files can be loaded directly into the system using **Google Drive for Desktop**
-and selected via the file picker at runtime.
+### Simulation Layer
 
-**Local data folder (optional):**  
-If you keep CSVs inside this repo, place them under `data/` and pass paths like:
-- `data/kuka_log600_scnd_20hz(canta).csv`
+* MATLAB-based simulation environment
+* Simulated robot behavior generation
+* Real vs simulated data comparison
+* Digital twin validation support
+
+### Event Management Layer
+
+* Automated anomaly logging
+* Severity classification
+* Event aggregation
+* Historical anomaly tracking
+
+### Visualization Layer
+
+* Thermal Dashboard
+* Torque Dashboard
+* Event Dashboard
+* Model Agreement Dashboard
+
+### AI Layer
+
+* KUKA AI Assistant
+* Explain This Graph
+* Event Summary
+* Maintenance Recommendation Engine
 
 ---
 
-## 📷 Screenshots
+# 🤖 KUKA AI Assistant
 
-*(See screenshots below for Thermal, Torque, and Events dashboards.)*
+KUKA AI is an AI-powered assistant integrated into the MindTwin platform.
+
+The assistant enables natural language interaction with the monitoring system and helps users interpret anomaly detection results without requiring advanced technical expertise.
+
+### Capabilities
+
+* Explain anomaly detection results
+* Interpret thermal and torque graphs
+* Generate event summaries
+* Explain model outputs
+* Recommend maintenance actions
+* Answer robot health-related questions
+
+### Example Questions
+
+* What is the current health status of the robot?
+* Which joint requires attention?
+* Explain this graph.
+* Summarize the latest anomaly event.
+* What maintenance action do you recommend?
+
+---
+
+# 📁 Data Input
+
+### Supported Format
+
+* CSV
+
+### Data Sources
+
+* Robot telemetry data
+* Thermal monitoring data
+* MATLAB simulation outputs
+
+### Workflow
+
+1. Load robot telemetry and thermal datasets.
+2. Start the data injection process.
+3. Stream data through the monitoring system.
+4. Process incoming data using PCA, Autoencoder, and Random Forest.
+5. Generate anomaly scores and event records.
+6. Compare simulation and real-world behavior.
+7. Visualize results through monitoring dashboards.
+8. Receive AI-generated explanations and maintenance recommendations.
+
+---
+
+# 📊 Dashboards
+
+### Thermal Dashboard
+
+Real-time visualization of temperature measurements, thermal statistics, threshold violations, and thermal anomaly events.
+
+### Torque Dashboard
+
+Live monitoring of joint torque values, anomaly scores, model outputs, and axis-level anomaly agreement.
+
+### Event Dashboard
+
+Centralized interface displaying anomaly records generated by all anomaly detection models, including timestamps, severity levels, affected axes, and anomaly scores.
+
+### Model Agreement Dashboard
+
+Displays how many anomaly detection models simultaneously identify abnormal behavior on each robot axis.
+
+### KUKA AI Dashboard
+
+Provides natural language interaction, graph explanations, event summaries, and maintenance recommendations.
+
+---
+
+# 🛠️ Technology Stack
+
+### Backend
+
+* Python
+* FastAPI
+* Uvicorn
+* WebSockets
+
+### Machine Learning
+
+* Scikit-learn
+* PCA
+* Random Forest
+
+### Deep Learning
+
+* Autoencoder
+
+### Simulation
+
+* MATLAB
+* Digital Twin Models
+
+### Frontend
+
+* HTML
+* JavaScript
+* Chart.js
+
+### AI Integration
+
+* Google Gemini API
+
+---
+
+# 🎯 Use Cases
+
+* Industrial robot monitoring
+* Predictive maintenance
+* Digital twin applications
+* Multi-model anomaly detection research
+* Simulation-assisted anomaly analysis
+* Industrial AI demonstrations
+* Smart manufacturing systems
+* Real vs simulated behavior comparison
+
+---
+
+# 📷 Screenshots
 
 
-<img width="1455" height="830" alt="image" src="https://github.com/user-attachments/assets/aadcbc15-d6bb-4cf2-be35-9e986f9c24ab" />
+## MATLAB Simulation Environment
 
-<img width="1455" height="830" alt="image" src="https://github.com/user-attachments/assets/4abc55e2-1d8a-4cd0-a39b-e68bcf92efc5" />
 
-<img width="1455" height="830" alt="image" src="https://github.com/user-attachments/assets/e4d1b0f3-153f-4f1f-bc7e-69cdf13939a6" />
 
-<img width="1455" height="830" alt="image" src="https://github.com/user-attachments/assets/bab715fe-c84a-4dc9-be37-c808a4b6ca54" />
+## Thermal Dashboard
 
+
+
+## Torque Dashboard
+
+
+## Event Dashboard
+<img width="1401" height="829" alt="image" src="https://github.com/user-attachments/assets/0e87ce7e-e6e9-4078-ae9c-818cdab76e29" />
+
+
+## Autoencoder Dashboard
+<img width="1458" height="758" alt="image" src="https://github.com/user-attachments/assets/48af36cc-f26e-47a0-9e78-a679cfd9475f" />
+
+<img width="1463" height="709" alt="image" src="https://github.com/user-attachments/assets/5db0c29f-5c77-4719-8f9e-d79c13fb4b59" />
+
+
+
+
+
+
+## KUKA AI Chatbot
+
+<img width="380" height="540" alt="image" src="https://github.com/user-attachments/assets/d51f3b7c-3ca6-4bc1-804d-ca17f2feb3d9" />
+
+
+
+
+
+---
+
+# 📌 Project Status
+
+MindTwin successfully combines real-time monitoring, MATLAB-based simulation, PCA, Autoencoder, Random Forest, anomaly event management, model agreement analysis, and KUKA AI into a unified predictive maintenance platform for industrial robotic systems.

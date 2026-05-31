@@ -825,6 +825,24 @@ def rf_meta():
     )
 
 
+@app.get("/api/rf/events")
+def rf_events():
+    """
+    Return TORQUE_RF anomaly events from the current live session error_log.
+    Used by rf.html (replay mode) and torque.html (loadData RF support).
+    Each event has: timestamp, type='TORQUE_RF', meta.worst_joint, meta.rf_scores,
+    meta.anomaly_joints, meta.score, meta.threshold, meta.frame_no.
+    """
+    rf_ev = [
+        e for e in error_log
+        if e.get("type") in ("TORQUE_RF", "TORQUE_TRIPLE_COMBINED", "TORQUE_COMBINED")
+    ]
+    return JSONResponse(
+        content={"events": rf_ev, "count": len(rf_ev)},
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
+    )
+
+
 # ---------------------------
 # ANOMALY HELPERS (backend-side)
 # ---------------------------
@@ -936,14 +954,15 @@ def anomaly_combined():
 @app.get("/api/anomaly/torque-counts")
 def anomaly_torque_counts():
     """
-    Return anomaly counts per TORQUE_A1-A6 from PCA and Autoencoder results.
+    Return anomaly counts per TORQUE_A1-A6 from PCA, Autoencoder and RF results.
+    RF counts are derived from live session TORQUE_RF events in error_log.
     Combined records are NOT counted separately.
     """
     TORQUE_FEATURES = [
         "TORQUE_A1","TORQUE_A2","TORQUE_A3",
         "TORQUE_A4","TORQUE_A5","TORQUE_A6"
     ]
-    counts = {f: {"pca": 0, "ae": 0, "total": 0} for f in TORQUE_FEATURES}
+    counts = {f: {"pca": 0, "ae": 0, "rf": 0, "total": 0} for f in TORQUE_FEATURES}
 
     try:
         pca_path = BASE_DIR / "artifacts" / "pca_results.json"
@@ -975,8 +994,24 @@ def anomaly_torque_counts():
                     if row.get("is_anomaly"):
                         counts[feat]["ae"] += 1
 
+        # RF counts from live session error_log (TORQUE_RF events)
+        import re as _re
+        for ev in error_log:
+            if ev.get("type") != "TORQUE_RF":
+                continue
+            meta = ev.get("meta") or {}
+            # Try worst_joint first
+            wj = meta.get("worst_joint")
+            feat = None
+            if wj is not None:
+                m = _re.search(r'([1-6])', str(wj))
+                if m:
+                    feat = f"TORQUE_A{m.group(1)}"
+            if feat and feat in TORQUE_FEATURES:
+                counts[feat]["rf"] += 1
+
         for feat in TORQUE_FEATURES:
-            counts[feat]["total"] = counts[feat]["pca"] + counts[feat]["ae"]
+            counts[feat]["total"] = counts[feat]["pca"] + counts[feat]["ae"] + counts[feat]["rf"]
 
         return JSONResponse(content={"counts": counts})
 

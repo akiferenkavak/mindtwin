@@ -4,10 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Random Forest Anomaly Detection – MindTwin</title>
-  <meta name="description" content="Grey-box Bagging Random Forest torque anomaly detection for KUKA robot joints A1, A2, A3." />
+  <meta name="description" content="Grey-box Bagging Random Forest torque anomaly detection for KUKA robot joints A1–A6. Live and replay mode analysis with per-axis residual charts." />
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <style>
+    /* ── Base ─────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; }
 
     html, body {
@@ -19,7 +20,7 @@
       min-height: 100vh;
     }
 
-    /* ── Nav ────────────────────────────────────────────────── */
+    /* ── Nav ──────────────────────────────────────────────── */
     nav {
       background: #171616;
       display: flex;
@@ -46,26 +47,21 @@
       transition: background 0.2s ease, color 0.2s ease;
     }
 
-    nav a:visited {
-      color: #945151;
-    }
+    nav a:visited { color: #945151; }
 
     nav a:hover, nav a.active {
       background: rgba(71, 132, 230, 0.788);
       color: #fff;
     }
 
-    /* ── Page header ─────────────────────────────────────────── */
-    .page-header {
-      margin-bottom: 1.5rem;
-    }
+    /* ── Page header ─────────────────────────────────────── */
+    .page-header { margin-bottom: 1.5rem; }
 
     .page-header h1 {
       margin: 0 0 0.4rem 0;
       font-size: 1.75rem;
       font-weight: 700;
       letter-spacing: 0.3px;
-      color: #eee;
     }
 
     .page-header p {
@@ -74,7 +70,178 @@
       font-size: 0.95rem;
     }
 
-    /* ── Stats bar ───────────────────────────────────────────── */
+    /* ── Toolbar ─────────────────────────────────────────── */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+
+    /* Mode tabs */
+    .tab-group {
+      display: flex;
+      background: #1b1b1b;
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .tab-btn {
+      padding: 0.5rem 1.1rem;
+      border: none;
+      background: transparent;
+      color: #aaa;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.18s, color 0.18s;
+      font-family: inherit;
+    }
+
+    .tab-btn.active {
+      background: #1a3d6b;
+      color: #fff;
+    }
+
+    .tab-btn:hover:not(.active) {
+      background: rgba(26, 61, 107, 0.35);
+      color: #fff;
+    }
+
+    /* Live mode toggle */
+    .live-toggle {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-left: auto;
+    }
+
+    .live-label {
+      font-size: 0.88rem;
+      color: #aaa;
+      font-weight: 600;
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+    }
+
+    .switch input { display: none; }
+
+    .slider {
+      position: absolute;
+      inset: 0;
+      background: #333;
+      border-radius: 24px;
+      cursor: pointer;
+      transition: 0.3s;
+    }
+
+    .slider::before {
+      content: "";
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      left: 3px;
+      bottom: 3px;
+      background: #fff;
+      border-radius: 50%;
+      transition: 0.3s;
+    }
+
+    input:checked + .slider { background: #1a3d6b; }
+    input:checked + .slider::before { transform: translateX(20px); }
+
+    .btn {
+      padding: 0.45rem 1rem;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.88rem;
+      font-weight: 600;
+      font-family: inherit;
+      transition: background 0.18s, transform 0.1s;
+    }
+
+    .btn:active { transform: scale(0.97); }
+
+    .btn-primary { background: #1a3d6b; color: #fff; }
+    .btn-primary:hover { background: #2254a0; }
+
+    .btn-secondary { background: #222; color: #ccc; border: 1px solid #333; }
+    .btn-secondary:hover { background: #2c2c2c; }
+
+    /* Live mode indicator */
+    .live-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.82rem;
+      color: #4da6ff;
+      font-weight: 700;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .live-indicator.on { opacity: 1; }
+
+    .live-dot {
+      width: 7px;
+      height: 7px;
+      background: #4da6ff;
+      border-radius: 50%;
+      animation: pulse 1.2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.75); }
+    }
+
+    /* ── Axis dropdown (per-axis mode) ─────────────────── */
+    .feature-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .feature-row label {
+      color: #aaa;
+      font-size: 0.88rem;
+      font-weight: 600;
+    }
+
+    select#axisSelect {
+      background: #1b1b1b;
+      color: #eee;
+      border: 1px solid #333;
+      padding: 0.45rem 0.75rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-family: inherit;
+      cursor: pointer;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    select#axisSelect:hover, select#axisSelect:focus { border-color: #1a3d6b; }
+
+    .feature-badge {
+      background: #1e1e1e;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 0.3rem 0.65rem;
+      font-size: 0.8rem;
+      color: #aaa;
+    }
+
+    /* ── Stats bar ───────────────────────────────────────── */
     .stats-bar {
       display: flex;
       gap: 1rem;
@@ -92,40 +259,12 @@
 
     .stat-pill .label { color: #888; margin-right: 0.35rem; }
     .stat-pill .value { color: #eee; font-weight: 700; }
-    .stat-pill .value.red    { color: #ef4444; }
-    .stat-pill .value.green  { color: #22c55e; }
-    .stat-pill .value.orange { color: #4da6ff; }
+    .stat-pill .value.red   { color: #ef4444; }
+    .stat-pill .value.green { color: #22c55e; }
+    .stat-pill .value.blue  { color: #4da6ff; }
+    .stat-pill .value.orange { color: #f97316; }
 
-    /* ── Live dot ────────────────────────────────────────────── */
-    .live-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-      background: rgba(145,18,18,0.15);
-      border: 1px solid rgba(145,18,18,0.4);
-      border-radius: 20px;
-      padding: 0.3rem 0.75rem;
-      font-size: 0.8rem;
-      font-weight: 600;
-      color: #f87171;
-    }
-
-    .live-dot {
-      width: 7px;
-      height: 7px;
-      background: #ef4444;
-      border-radius: 50%;
-      animation: pulse 1.2s infinite;
-    }
-
-    .live-dot.off { background: #555; animation: none; }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.4; transform: scale(0.75); }
-    }
-
-    /* ── Info cards ─────────────────────────────────────────── */
+    /* ── Model info panel ────────────────────────────────── */
     .info-row {
       display: flex;
       gap: 1rem;
@@ -134,8 +273,8 @@
     }
 
     .info-card {
-      background: linear-gradient(180deg, #1b1b1b, #131313);
-      border: 1px solid #222;
+      background: linear-gradient(135deg, #1a2a3d, #141e2e);
+      border: 1px solid #1e3a5f;
       border-radius: 12px;
       padding: 0.85rem 1.2rem;
       font-size: 0.82rem;
@@ -144,7 +283,7 @@
     }
 
     .info-card .ic-title {
-      color: #aaa;
+      color: #4da6ff;
       font-weight: 700;
       margin-bottom: 0.5rem;
       font-size: 0.78rem;
@@ -159,45 +298,40 @@
       margin-bottom: 0.2rem;
     }
 
-    .info-card .ic-key { color: #777; }
-    .info-card .ic-val { color: #eee; font-weight: 600; font-variant-numeric: tabular-nums; }
-    .info-card .ic-val.red { color: #ef4444; }
-    .info-card .ic-val.ok  { color: #22c55e; }
+    .info-card .ic-key { color: #778; }
+    .info-card .ic-val { color: #cde; font-weight: 600; font-variant-numeric: tabular-nums; }
 
-    /* Threshold bars inside axis cards */
+    /* Threshold bars */
     .thr-bar-wrap { margin-top: 0.5rem; }
 
     .thr-bar-row {
       display: flex;
       align-items: center;
       gap: 0.5rem;
-      margin-bottom: 0.3rem;
+      margin-bottom: 0.25rem;
       font-size: 0.78rem;
     }
 
-    .thr-bar-label { color: #aaa; width: 24px; flex-shrink: 0; }
+    .thr-bar-label { color: #778; width: 24px; flex-shrink: 0; }
 
     .thr-bar-track {
       flex: 1;
-      height: 8px;
-      background: #111;
+      height: 6px;
+      background: #1e2e40;
       border-radius: 4px;
       overflow: hidden;
     }
 
     .thr-bar-fill {
       height: 100%;
-      background: linear-gradient(90deg, #374151, #6b7280);
+      background: linear-gradient(90deg, #1a3d6b, #4da6ff);
       border-radius: 4px;
-      transition: width 0.35s ease;
+      transition: width 0.4s;
     }
-
-    .thr-bar-fill.warn   { background: linear-gradient(90deg, #1a3d6b, #4da6ff); }
-    .thr-bar-fill.danger { background: linear-gradient(90deg, #991b1b, #ef4444); }
 
     .thr-bar-val { color: #aaa; width: 52px; text-align: right; flex-shrink: 0; font-size: 0.76rem; }
 
-    /* ── Chart card ─────────────────────────────────────────── */
+    /* ── Chart card ─────────────────────────────────────── */
     .chart-card {
       background: linear-gradient(180deg, #1b1b1b, #131313);
       border: 1px solid #222;
@@ -207,49 +341,13 @@
       position: relative;
     }
 
-    .chart-card-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 1rem;
-      flex-wrap: wrap;
-      gap: 0.5rem;
-    }
-
-    .chart-card-header h3 {
-      margin: 0;
-      font-size: 0.95rem;
-      color: #aaa;
-      font-weight: 600;
-    }
-
     .chart-card canvas {
       width: 100% !important;
       max-height: 380px;
     }
 
-    .no-data-overlay {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      background: rgba(17,17,17,0.85);
-      border-radius: 16px;
-      color: #555;
-      font-size: 0.9rem;
-      gap: 0.5rem;
-    }
-
-    .no-data-overlay span.big { font-size: 2rem; }
-
-    /* ── Axis chips ─────────────────────────────────────────── */
-    .axis-chips {
-      display: flex;
-      gap: 0.5rem;
-      flex-wrap: wrap;
-    }
+    /* Axis chips */
+    .axis-chips { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
 
     .axis-chip {
       font-size: 0.75rem;
@@ -257,6 +355,7 @@
       border-radius: 5px;
       padding: 0.15rem 0.5rem;
       opacity: 0.7;
+      transition: opacity 0.2s;
     }
 
     .axis-chip.A1 { background: rgba(77,166,255,0.18); color: #4da6ff; border: 1px solid rgba(77,166,255,0.35); }
@@ -271,24 +370,24 @@
 
     @keyframes chipFlash {
       0%, 100% { opacity: 1; }
-      50%       { opacity: 0.3; }
+      50% { opacity: 0.3; }
     }
 
-    /* ── Table section ──────────────────────────────────────── */
+    /* ── Anomaly table ───────────────────────────────────── */
     .table-section {
       background: linear-gradient(180deg, #1b1b1b, #131313);
       border: 1px solid #222;
       border-radius: 16px;
-      padding: 1.25rem 1.5rem;
-      margin-bottom: 1.5rem;
-      overflow-x: auto;
+      overflow: hidden;
+      margin-bottom: 2rem;
     }
 
     .table-section-header {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid #222;
       display: flex;
       align-items: center;
-      gap: 0.75rem;
-      margin-bottom: 1rem;
+      justify-content: space-between;
     }
 
     .table-section-header h3 {
@@ -298,45 +397,48 @@
     }
 
     .badge-count {
-      background: #911212;
+      background: #1a3d6b;
       color: #fff;
       border-radius: 20px;
-      padding: 0.15rem 0.6rem;
+      padding: 0.2rem 0.6rem;
       font-size: 0.78rem;
       font-weight: 700;
     }
 
-    .rf-table {
+    table.rf-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 0.83rem;
+      font-size: 0.84rem;
     }
 
-    .rf-table th {
+    table.rf-table th {
       text-align: left;
-      color: #666;
-      font-size: 0.75rem;
+      padding: 0.75rem 1rem;
+      background: rgba(255,255,255,0.04);
+      color: #777;
       font-weight: 600;
+      font-size: 0.78rem;
       text-transform: uppercase;
-      letter-spacing: 0.4px;
+      letter-spacing: 0.5px;
       border-bottom: 1px solid #222;
-      padding: 0.5rem 0.75rem;
+      white-space: nowrap;
     }
 
-    .rf-table td {
-      padding: 0.5rem 0.75rem;
+    table.rf-table td {
+      padding: 0.65rem 1rem;
       border-bottom: 1px solid #1a1a1a;
-      color: #ccc;
       vertical-align: middle;
+      white-space: nowrap;
     }
 
-    .rf-table tr:hover td { background: rgba(255,255,255,0.03); }
+    table.rf-table tr:last-child td { border-bottom: none; }
+    table.rf-table tr:hover td { background: rgba(255,255,255,0.03); }
 
-    .rf-table td.anomaly-cell { color: #ef4444; font-weight: 700; }
-    .rf-table td.ok-cell      { color: #22c55e; }
-    .rf-table td.warn-cell    { color: #4da6ff; }
-
-    .no-data { text-align: center; color: #444; padding: 2rem !important; }
+    .td-time  { color: #aaa; font-variant-numeric: tabular-nums; }
+    .td-joint { color: #f97316; font-weight: 600; }
+    .td-score { color: #eee; font-variant-numeric: tabular-nums; }
+    .td-thr   { color: #777; font-variant-numeric: tabular-nums; }
+    .td-axes  { color: #4da6ff; }
 
     .sev-badge {
       display: inline-block;
@@ -349,6 +451,13 @@
     .sev-badge.CRITICAL { background: rgba(239,68,68,0.2); color: #ef4444; border: 1px solid #991b1b; }
     .sev-badge.WARNING  { background: rgba(77,166,255,0.16); color: #4da6ff; border: 1px solid rgba(77,166,255,0.35); }
     .sev-badge.INFO     { background: rgba(100,100,100,0.2); color: #888; border: 1px solid #333; }
+
+    .no-data {
+      text-align: center;
+      padding: 2.5rem 1rem;
+      color: #555;
+      font-size: 0.9rem;
+    }
 
     /* ── Algorithm explainer ──────────────────────────────── */
     .algo-section {
@@ -385,85 +494,83 @@
     .algo-step .step-num {
       font-size: 1.4rem;
       font-weight: 800;
-      color: #911212;
+      color: #f97316;
       opacity: 0.6;
       display: block;
       margin-bottom: 0.25rem;
     }
 
-    .algo-step h4 {
-      margin: 0 0 0.3rem 0;
-      font-size: 0.85rem;
-      color: #eee;
+    .algo-step h4 { margin: 0 0 0.3rem 0; font-size: 0.85rem; color: #eee; }
+    .algo-step p  { margin: 0; color: #999; font-size: 0.81rem; }
+
+    /* ── Chat bot ────────────────────────────────────────── */
+    #chat-toggle {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      border: none;
+      background: #1a3d6b;
+      color: white;
+      font-size: 1.1rem;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+      z-index: 9999;
     }
 
-    .algo-step p {
-      margin: 0;
-      color: #999;
-      font-size: 0.81rem;
-    }
-
-    /* ── KUKA AI chatbot ─────────────────────────────────── */
-    .chat-section {
-      background: linear-gradient(180deg, #1b1b1b, #131313);
-      border: 1px solid #222;
+    #chatbot {
+      position: fixed;
+      right: 20px;
+      bottom: 100px;
+      width: 340px;
+      height: 420px;
+      background: #181818;
+      border: 1px solid #333;
       border-radius: 16px;
-      padding: 1.25rem 1.5rem;
-      margin-bottom: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      z-index: 9999;
     }
 
-    .chat-section h3 {
-      margin: 0 0 1rem 0;
-      font-size: 1rem;
-      color: #aaa;
-    }
+    .hidden { display: none !important; }
+
+    #chat-header { padding: 1rem; background: #1a3d6b; font-weight: bold; }
 
     #chat-messages {
-      height: 180px;
+      flex: 1;
       overflow-y: auto;
-      background: #0e0e0e;
-      border: 1px solid #222;
-      border-radius: 8px;
-      padding: 0.75rem;
-      font-size: 0.83rem;
-      margin-bottom: 0.75rem;
+      padding: 1rem;
+      font-size: 0.95rem;
     }
 
-    .chat-msg { margin-bottom: 0.5rem; line-height: 1.4; }
-    .chat-msg.user  { color: #4da6ff; }
-    .chat-msg.bot   { color: #ccc; }
-    .chat-msg.error { color: #ef4444; }
+    .msg-user { margin-bottom: 1rem; color: #7dd3fc; }
+    .msg-ai   { margin-bottom: 1rem; color: #c4f5c4; }
 
-    #chat-form { display: flex; gap: 0.5rem; }
+    #chat-input-area { display: flex; border-top: 1px solid #333; }
 
     #chat-input {
       flex: 1;
-      background: #1a1a1a;
-      border: 1px solid #333;
-      color: #eee;
-      border-radius: 8px;
-      padding: 0.6rem 0.9rem;
-      font-size: 0.88rem;
-      font-family: inherit;
+      background: #111;
+      border: none;
+      color: white;
+      padding: 1rem;
       outline: none;
+      font-family: inherit;
     }
-
-    #chat-input:focus { border-color: rgba(71, 132, 230, 0.788); }
 
     #send-btn {
-      background: #911212;
+      background: #1a3d6b;
       color: white;
       border: none;
-      padding: 0.6rem 1.1rem;
-      border-radius: 8px;
+      padding: 1rem;
       cursor: pointer;
       font-family: inherit;
-      font-weight: 600;
-      font-size: 0.88rem;
-      transition: background 0.2s;
     }
-
-    #send-btn:hover { background: #b91c1c; }
   </style>
 </head>
 
@@ -482,55 +589,73 @@
 
   <div class="page-header">
     <h1>Random Forest Anomaly Detection</h1>
-    <p>Grey-box BaggingRegressor predicts joint torques from kinematics (q, q̇) + physics (τ_model). Residuals exceeding 3σ threshold (computed on validation set) trigger anomaly alerts for axes A1–A6.</p>
+    <p>Grey-box BaggingRegressor predicts joint torques from kinematics (q, q̇) + physics (τ_model). Residuals exceeding 3σ threshold trigger anomaly alerts for axes A1–A6.</p>
+  </div>
+
+  <!-- ── Toolbar ───────────────────────────────────────────── -->
+  <div class="toolbar">
+    <div class="tab-group">
+      <button id="tabOverall" class="tab-btn active" onclick="switchMode('overall')">Overall RF</button>
+      <button id="tabAxis"    class="tab-btn"        onclick="switchMode('axis')">Per-Axis RF</button>
+    </div>
+
+    <div class="live-toggle">
+      <span class="live-label">Live Mode</span>
+      <label class="switch">
+        <input type="checkbox" id="liveModeToggle" checked />
+        <span class="slider"></span>
+      </label>
+      <span class="live-indicator" id="liveIndicator">
+        <span class="live-dot"></span> LIVE
+      </span>
+    </div>
   </div>
 
   <!-- ── Stats bar ─────────────────────────────────────────── -->
-  <div class="stats-bar">
-    <div class="stat-pill">
-      <span class="label">Model:</span>
-      <span class="value orange">BaggingRegressor</span>
+  <div class="stats-bar" id="statsBar">
+    <div class="stat-pill"><span class="label">Mode:</span><span class="value" id="statMode">Overall</span></div>
+    <div class="stat-pill"><span class="label">Total Points:</span><span class="value" id="statTotal">–</span></div>
+    <div class="stat-pill"><span class="label">Anomalies:</span><span class="value red" id="statAnom">–</span></div>
+    <div class="stat-pill"><span class="label">Data Source:</span><span class="value green" id="statSource">Loading…</span></div>
+    <div class="stat-pill"><span class="label">Training Samples:</span><span class="value blue" id="statSamples">–</span></div>
+    <div class="stat-pill"><span class="label">WS Status:</span><span class="value" id="statWsStatus">Connecting…</span></div>
+  </div>
+
+  <!-- ── Model info panel ─────────────────────────────────── -->
+  <div class="info-row" id="infoRow" style="display:none;">
+    <div class="info-card">
+      <div class="ic-title">RF Model Info</div>
+      <div class="ic-row"><span class="ic-key">Algorithm</span><span class="ic-val">BaggingRegressor</span></div>
+      <div class="ic-row"><span class="ic-key">Estimators</span><span class="ic-val" id="ic-estimators">–</span></div>
+      <div class="ic-row"><span class="ic-key">Feature Dim</span><span class="ic-val" id="ic-dim">–</span></div>
+      <div class="ic-row"><span class="ic-key">Train Samples</span><span class="ic-val" id="ic-samples2">–</span></div>
+      <div class="ic-row"><span class="ic-key">Sigma Mult</span><span class="ic-val" id="ic-sigma">–</span></div>
     </div>
-    <div class="stat-pill">
-      <span class="label">Train Samples:</span>
-      <span class="value" id="statSamples">–</span>
+    <div class="info-card">
+      <div class="ic-title">Axis Thresholds (3σ)</div>
+      <div class="thr-bar-wrap" id="thrBars"></div>
     </div>
-    <div class="stat-pill">
-      <span class="label">Live Frames:</span>
-      <span class="value" id="statFrames">0</span>
-    </div>
-    <div class="stat-pill">
-      <span class="label">Anomalies:</span>
-      <span class="value red" id="statAnomalies">0</span>
-    </div>
-    <div class="stat-pill">
-      <span class="label">Worst Joint:</span>
-      <span class="value orange" id="statWorstJoint">–</span>
-    </div>
-    <div class="stat-pill">
-      <span class="label">WS Status:</span>
-      <span class="value" id="statWsStatus">Connecting…</span>
+    <div class="info-card">
+      <div class="ic-title">Physics Integration</div>
+      <div class="ic-row"><span class="ic-key">URDF Dynamics</span><span class="ic-val green" id="ic-urdf">–</span></div>
+      <div class="ic-row"><span class="ic-key">VEL_AXIS_ACT</span><span class="ic-val" id="ic-vel">–</span></div>
+      <div class="ic-row"><span class="ic-key">CURR Features</span><span class="ic-val" id="ic-curr">–</span></div>
     </div>
   </div>
 
-	  <!-- ── Chart card ────────────────────────────────────────── -->
-	  <div class="chart-card">
-    <div class="chart-card-header">
-      <h3 id="chartTitle">Live Residual Monitor</h3>
-      <div style="display:flex;align-items:center;gap:0.75rem;">
-        <div class="axis-chips" id="axisChipsContainer"></div>
-        <div class="live-badge">
-          <span class="live-dot" id="liveDot"></span>
-          LIVE
-        </div>
-      </div>
-    </div>
+  <!-- ── Per-axis mode: axis selector ──────────────────────── -->
+  <div class="feature-row hidden" id="axisRow">
+    <label for="axisSelect">Axis:</label>
+    <select id="axisSelect" onchange="onAxisChange()"></select>
+    <span class="feature-badge" id="axisAnomalyBadge">–</span>
+  </div>
+
+  <!-- ── Axis chips ─────────────────────────────────────────── -->
+  <div class="axis-chips" id="axisChipsContainer"></div>
+
+  <!-- ── Chart card ──────────────────────────────────────────── -->
+  <div class="chart-card">
     <canvas id="rfChart"></canvas>
-    <div class="no-data-overlay" id="noDataOverlay">
-      <span class="big">📡</span>
-      <span>Waiting for WebSocket data…</span>
-      <span style="font-size:0.78rem;color:#444;">Start producer_torque.py with AXIS_ACT column</span>
-    </div>
   </div>
 
   <!-- ── Anomaly table ─────────────────────────────────────── -->
@@ -543,20 +668,20 @@
       <thead id="rfTableHead">
         <tr>
           <th>Frame</th>
-          <th>Timestamp</th>
+          <th>Time</th>
           <th>Worst Joint</th>
           <th>Max Residual</th>
-          <th>Anomaly Joints</th>
+          <th>Anomaly Axes</th>
           <th>Severity</th>
         </tr>
       </thead>
       <tbody id="rfTableBody">
-        <tr><td colspan="6" class="no-data">Waiting for live anomaly data…</td></tr>
+        <tr><td colspan="6" class="no-data">Loading data…</td></tr>
       </tbody>
     </table>
   </div>
 
-  <!-- ── Algorithm explainer ──────────────────────────────── -->
+  <!-- ── Algorithm explainer ────────────────────────────────── -->
   <div class="algo-section">
     <h2>How Grey-Box Random Forest Detection Works</h2>
     <p style="color:#999;margin:0 0 0.5rem;">
@@ -567,22 +692,22 @@
       <div class="algo-step">
         <span class="step-num">01</span>
         <h4>Kinematic Feature Extraction</h4>
-        <p>AXIS_ACT data is parsed to extract 6 joint angles (q₁…q₆) in radians. If VEL_AXIS_ACT columns are present, measured velocities (deg/s → rad/s) are used directly. Otherwise, Savitzky-Golay + numerical gradient is applied.</p>
+        <p>AXIS_ACT data is parsed to extract 6 joint angles (q₁…q₆) in radians. VEL_AXIS_ACT columns provide measured velocities (deg/s → rad/s) or Savitzky-Golay gradient is applied.</p>
       </div>
       <div class="algo-step">
         <span class="step-num">02</span>
-        <h4>13-Dimensional Feature Vector (Grey-Box)</h4>
-        <p>Feature vector X = [q₁…q₆, q̇₁…q̇₆, τ_model_j]. The 13th feature is the physics-based torque from Recursive Newton-Euler inverse dynamics (URDF model) — this is what makes it "grey-box."</p>
+        <h4>Grey-Box Feature Vector</h4>
+        <p>Feature vector X = [q₁…q₆, q̇₁…q̇₆, curr₁…curr₆, τ_model_j]. The physics-based torque from Recursive Newton-Euler inverse dynamics (URDF) is the grey-box component.</p>
       </div>
       <div class="algo-step">
         <span class="step-num">03</span>
         <h4>BaggingRegressor Prediction</h4>
-        <p>Six separate models (one per axis A1–A6) predict the expected normalized torque τ̂ᵢ. 100 decision-tree estimators each, trained on 80% of data.</p>
+        <p>Six separate models (one per axis A1–A6) predict the expected normalized torque τ̂ᵢ. 100 decision-tree estimators, trained on 80% of data.</p>
       </div>
       <div class="algo-step">
         <span class="step-num">04</span>
-        <h4>Residual &amp; Threshold</h4>
-        <p>Residual rᵢ = |τᵢ_actual − τ̂ᵢ|. Thresholds are computed on the held-out 20% validation set: thr = mean(|rᵢ|) + 3·std(|rᵢ|). Using absolute residuals and a validation split avoids overly optimistic thresholds.</p>
+        <h4>Residual & Threshold</h4>
+        <p>Residual rᵢ = |τᵢ_actual − τ̂ᵢ|. Thresholds: thr = mean(|rᵢ|) + 3·std(|rᵢ|) on held-out 20% validation set.</p>
       </div>
       <div class="algo-step">
         <span class="step-num">05</span>
@@ -592,26 +717,27 @@
       <div class="algo-step">
         <span class="step-num">06</span>
         <h4>BRAKE_SIG Filtering</h4>
-        <p>Training only used frames where BRAKE_SIG == 63 (brakes released, robot in motion). This excludes idle/clamped states to avoid contaminating the model with near-zero torques.</p>
+        <p>Training only used frames where BRAKE_SIG == 63 (brakes released, robot in motion). This excludes idle/clamped states.</p>
       </div>
     </div>
   </div>
 
-  <!-- ── KUKA AI chatbot ────────────────────────────────────── -->
-  <div class="chat-section">
-    <h3>MindTwin AI Assistant</h3>
-    <div id="chat-messages">
-      <div class="chat-msg bot">Ready. Ask about RF anomalies, joint health, or model parameters.</div>
+  <!-- ── KUKA AI Chat ─────────────────────────────────────── -->
+  <button id="chat-toggle">KUKA AI</button>
+
+  <div id="chatbot" class="hidden">
+    <div id="chat-header">MindTwin AI Assistant</div>
+    <div id="chat-messages"></div>
+    <div id="chat-input-area">
+      <input id="chat-input" placeholder="Ask about RF anomalies, joint health…" />
+      <button id="send-btn">Send</button>
     </div>
-    <form id="chat-form" onsubmit="sendChat(event)">
-      <input id="chat-input" type="text" placeholder="e.g. Which joint has the most anomalies?" autocomplete="off" />
-      <button id="send-btn" type="submit">Send</button>
-    </form>
   </div>
 
   <script>
-    // ── Constants ────────────────────────────────────────────
-    const MAX_POINTS   = 80;
+    // ================================================================
+    // CONSTANTS
+    // ================================================================
     const CHART_COLORS = {
       A1: { line: '#4da6ff', thr: 'rgba(77,166,255,0.35)'  },
       A2: { line: '#22c55e', thr: 'rgba(34,197,94,0.35)'   },
@@ -620,159 +746,247 @@
       A5: { line: '#ef4444', thr: 'rgba(239,68,68,0.35)'   },
       A6: { line: '#a855f7', thr: 'rgba(168,85,247,0.35)'  },
     };
+    const MAX_POINTS = 80;
+    const LIVE_INTERVAL_MS = 80;
 
-    // ── State ────────────────────────────────────────────────
-    let metaAxes       = [];   // populated from /api/rf/meta
+    // ================================================================
+    // STATE
+    // ================================================================
+    let currentMode    = 'overall';
+    let currentAxis    = null;
+    let liveMode       = true;
+    let liveTimer      = null;
+    let liveIndex      = 0;
+    let liveDataset    = [];
+    let livePtsCount   = 0;
+    let liveAnomCount  = 0;
+
+    // Meta from /api/rf/meta
+    let metaAxes       = [];
     let metaThresholds = {};
-    let frameCount     = 0;
-    let anomalyCount   = 0;
-    let dataReceived   = false;
+    let trainSamples   = null;
+
+    // Anomaly rows for table
     let anomalyRows    = [];
 
-    // ── Chart setup (empty — datasets added after meta loads) ─
+    // Axis-specific anomaly counts (live mode)
+    let axisAnomCounts = {};  // { A1: {pts:0, anoms:0}, … }
+
+    // Chart
+    let chart = null;
     const ctx = document.getElementById('rfChart').getContext('2d');
 
-    const makeDataset = (ax) => ({
-      label: `${ax} Residual`,
-      data: [],
-      borderColor: (CHART_COLORS[ax] || CHART_COLORS.A1).line,
-      backgroundColor: 'transparent',
-      borderWidth: 2,
-      pointRadius: 0,
-      pointHoverRadius: 4,
-      tension: 0.3,
-    });
+    // ================================================================
+    // CHART SETUP
+    // ================================================================
+    function createChart() {
+      if (chart) { chart.destroy(); chart = null; }
 
-    const makeThrDataset = (ax) => ({
-      label: `Thr ${ax}`,
-      data: [],
-      borderColor: (CHART_COLORS[ax] || CHART_COLORS.A1).thr,
-      borderDash: [6, 4],
-      borderWidth: 1.5,
-      pointRadius: 0,
-      tension: 0,
-      fill: false,
-    });
-
-    const chart = new Chart(ctx, {
-      type: 'line',
-      data: { labels: [], datasets: [] },
-      options: {
-        animation: false,
-        responsive: true,
-        maintainAspectRatio: true,
-        aspectRatio: 3.5,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          legend: {
-            labels: { color: '#888', font: { size: 11 }, boxWidth: 14 },
-          },
-          tooltip: {
-            backgroundColor: '#1e1e1e',
-            borderColor: '#333',
-            borderWidth: 1,
-            titleColor: '#aaa',
-            bodyColor: '#eee',
-            callbacks: {
-              label: c => ` ${c.dataset.label}: ${c.parsed.y != null ? c.parsed.y.toFixed(4) : '–'}`,
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: { datasets: [] },
+        options: {
+          responsive: true,
+          animation: false,
+          interaction: { mode: 'nearest', axis: 'x', intersect: false },
+          scales: {
+            x: {
+              type: 'linear',
+              title: { display: true, text: 'Frame', color: '#777' },
+              ticks: { color: '#666', maxRotation: 0 },
+              grid: { color: 'rgba(255,255,255,0.05)' }
             },
+            y: {
+              title: { display: true, text: 'Residual (normalized)', color: '#777' },
+              ticks: { color: '#666' },
+              grid: { color: 'rgba(255,255,255,0.05)' },
+              suggestedMin: 0
+            }
           },
-        },
-        scales: {
-          x: {
-            ticks: { color: '#555', maxTicksLimit: 10, font: { size: 10 } },
-            grid:  { color: 'rgba(255,255,255,0.03)' },
-          },
-          y: {
-            ticks: { color: '#555', font: { size: 10 } },
-            grid:  { color: 'rgba(255,255,255,0.05)' },
-            min: 0,
-            title: { display: true, text: 'Residual (normalized)', color: '#555', font: { size: 11 } },
-          },
-        },
-      },
-    });
+          plugins: {
+            legend: { labels: { color: '#bbb', font: { size: 12 } } },
+            tooltip: {
+              backgroundColor: '#1e1e1e',
+              borderColor: '#333',
+              borderWidth: 1,
+              titleColor: '#aaa',
+              bodyColor: '#eee',
+              callbacks: {
+                label: c => ` ${c.dataset.label}: ${c.parsed.y != null ? c.parsed.y.toFixed(5) : '–'}`
+              }
+            }
+          }
+        }
+      });
+    }
 
-    // ── Load meta & build dynamic UI ─────────────────────────
-    fetch('/api/rf/meta')
-      .then(r => r.json())
-      .then(meta => {
+    function makeResidualDataset(ax) {
+      return {
+        label: `${ax} Residual`,
+        data: [],
+        borderColor: (CHART_COLORS[ax] || CHART_COLORS.A1).line,
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        tension: 0.3,
+      };
+    }
+
+    function makeThrDataset(ax) {
+      return {
+        label: `Thr ${ax}`,
+        data: [],
+        borderColor: (CHART_COLORS[ax] || CHART_COLORS.A1).thr,
+        borderDash: [6, 4],
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0,
+        fill: false,
+      };
+    }
+
+    // ================================================================
+    // LOAD META
+    // ================================================================
+    async function loadMeta() {
+      try {
+        const res = await fetch('/api/rf/meta');
+        if (!res.ok) return;
+        const meta = await res.json();
         if (!meta || meta.error) return;
 
         const thrs = meta.thresholds || [];
-        const axes = meta.torque_axes || ['A1','A2','A3'];
-        metaAxes   = axes;
-	    axes.forEach((ax, i) => {
-	      if (thrs[i] != null) metaThresholds[ax] = thrs[i];
-	    });
-	
-		    document.getElementById('statSamples').textContent  = meta.training_samples ?? '–';
+        metaAxes = meta.torque_axes || ['A1','A2','A3'];
+        metaAxes.forEach((ax, i) => {
+          if (thrs[i] != null) metaThresholds[ax] = thrs[i];
+          axisAnomCounts[ax] = { pts: 0, anoms: 0 };
+        });
 
-        // ── Axis chips (dynamic) ──
-        document.getElementById('axisChipsContainer').innerHTML = axes.map(ax =>
+        trainSamples = meta.training_samples ?? null;
+        document.getElementById('statSamples').textContent = trainSamples ?? '–';
+
+        // Info panel
+        document.getElementById('ic-estimators').textContent = meta.n_estimators ?? '–';
+        document.getElementById('ic-dim').textContent        = meta.feature_dim   ?? '–';
+        document.getElementById('ic-samples2').textContent   = trainSamples       ?? '–';
+        document.getElementById('ic-sigma').textContent      = meta.sigma_mult    ?? '–';
+        document.getElementById('ic-urdf').textContent       = meta.inverse_dynamics_used ? '✓ Yes' : '✗ No';
+        document.getElementById('ic-vel').textContent        = meta.vel_axis_act_used ? '✓ Yes' : '✗ No';
+        document.getElementById('ic-curr').textContent       = meta.curr_used ? '✓ Yes' : '✗ No';
+        document.getElementById('infoRow').style.display     = '';
+
+        // Threshold bars
+        const maxThr = Math.max(...Object.values(metaThresholds), 0.001);
+        document.getElementById('thrBars').innerHTML = metaAxes.map(ax => {
+          const thr = metaThresholds[ax] ?? 0;
+          const pct = Math.min((thr / maxThr) * 100, 100).toFixed(1);
+          const col = (CHART_COLORS[ax] || CHART_COLORS.A1).line;
+          return `
+            <div class="thr-bar-row">
+              <span class="thr-bar-label">${ax}</span>
+              <div class="thr-bar-track">
+                <div class="thr-bar-fill" style="width:${pct}%;background:${col};"></div>
+              </div>
+              <span class="thr-bar-val">${thr.toFixed(5)}</span>
+            </div>`;
+        }).join('');
+
+        // Axis chips
+        document.getElementById('axisChipsContainer').innerHTML = metaAxes.map(ax =>
           `<span class="axis-chip ${ax}" id="chip${ax}">${ax}</span>`
         ).join('');
 
-        // ── Chart title ──
-        document.getElementById('chartTitle').textContent =
-          `Live Residual Monitor — ${axes.join(' · ')} vs Thresholds`;
+        // Axis dropdown for per-axis mode
+        const sel = document.getElementById('axisSelect');
+        sel.innerHTML = metaAxes.map(ax => `<option value="${ax}">${ax}</option>`).join('');
+        currentAxis = metaAxes[0] || null;
 
-        // ── Chart datasets (dynamic) ──
-        axes.forEach(ax => chart.data.datasets.push(makeDataset(ax)));
-        axes.forEach(ax => chart.data.datasets.push(makeThrDataset(ax)));
-        chart.update('none');
+        buildChartForMode();
 
-        // ── Table header (dynamic) ──
-        document.querySelector('#rfTableHead tr').innerHTML = `
-          <th>Frame</th>
-          <th>Timestamp</th>
-          <th>Worst Joint</th>
-          ${axes.map(ax => `<th>${ax} Res.</th>`).join('')}
-          <th>Max Residual</th>
-          <th>Anomaly Joints</th>
-          <th>Severity</th>`;
+      } catch(e) {
+        console.error('[rf] meta load error:', e);
+      }
+    }
 
-      })
-      .catch(() => {});
+    // ================================================================
+    // CHART BUILD
+    // ================================================================
+    function buildChartForMode() {
+      createChart();
 
-    // ── Chart update ─────────────────────────────────────────
-    function pushToChart(frameNo, scores, thresholds) {
-      const n = metaAxes.length;
-      if (n === 0) return;
-      chart.data.labels.push(`#${frameNo}`);
-      metaAxes.forEach((ax, i) => {
-        chart.data.datasets[i].data.push(scores[ax] ?? null);
-        const thr = thresholds ? (thresholds[ax] ?? null) : (metaThresholds[ax] ?? null);
-        chart.data.datasets[i + n].data.push(thr);
-      });
-      if (chart.data.labels.length > MAX_POINTS) {
-        chart.data.labels.shift();
-        chart.data.datasets.forEach(ds => ds.data.shift());
+      if (currentMode === 'overall') {
+        metaAxes.forEach(ax => chart.data.datasets.push(makeResidualDataset(ax)));
+        metaAxes.forEach(ax => chart.data.datasets.push(makeThrDataset(ax)));
+      } else {
+        if (currentAxis) {
+          chart.data.datasets.push(makeResidualDataset(currentAxis));
+          chart.data.datasets.push(makeThrDataset(currentAxis));
+        }
       }
       chart.update('none');
     }
 
-    // ── Anomaly table ─────────────────────────────────────────
-    function addAnomalyRow(pkt, scores, thresholds, anomalyJoints) {
-      const maxRes = pkt.rf_max_residual ?? 0;
-      const worstKey = pkt.rf_worst_joint ? `A${pkt.rf_worst_joint}` : null;
-      const ratio = thresholds && worstKey && thresholds[worstKey]
-        ? maxRes / thresholds[worstKey] : 0;
+    function pushToChart(frameNo, scores, thresholds) {
+      if (!chart) return;
+      const n = currentMode === 'overall' ? metaAxes.length : 1;
+      const axes = currentMode === 'overall' ? metaAxes : (currentAxis ? [currentAxis] : []);
+
+      axes.forEach((ax, i) => {
+        chart.data.datasets[i].data.push({ x: frameNo, y: scores[ax] ?? null });
+        const thr = thresholds ? (thresholds[ax] ?? null) : (metaThresholds[ax] ?? null);
+        chart.data.datasets[i + axes.length].data.push({ x: frameNo, y: thr });
+
+        if (chart.data.datasets[i].data.length > MAX_POINTS) {
+          chart.data.datasets[i].data.shift();
+          chart.data.datasets[i + axes.length].data.shift();
+        }
+      });
+      chart.update('none');
+    }
+
+    // ================================================================
+    // MODE SWITCHING
+    // ================================================================
+    function switchMode(mode) {
+      currentMode = mode;
+      document.getElementById('tabOverall').classList.toggle('active', mode === 'overall');
+      document.getElementById('tabAxis').classList.toggle('active', mode === 'axis');
+      document.getElementById('axisRow').classList.toggle('hidden', mode === 'overall');
+      document.getElementById('statMode').textContent = mode === 'overall' ? 'Overall RF' : `Per-Axis RF`;
+
+      buildChartForMode();
+
+      if (!liveMode) {
+        // re-render replay for current mode
+        startReplay();
+      } else {
+        updateStatBadge();
+      }
+    }
+
+    function onAxisChange() {
+      currentAxis = document.getElementById('axisSelect').value;
+      document.getElementById('statMode').textContent = `Per-Axis RF: ${currentAxis}`;
+      buildChartForMode();
+      updateStatBadge();
+      if (!liveMode) startReplay();
+    }
+
+    // ================================================================
+    // ANOMALY TABLE
+    // ================================================================
+    function addAnomalyRow(frameNo, ts, worstJoint, maxResidual, anomalyJoints, thresholds) {
+      const thr = thresholds && worstJoint ? (thresholds[worstJoint] ?? 0) : 0;
+      const ratio = thr > 0 ? maxResidual / thr : 0;
       const sev = ratio >= 1.6 ? 'CRITICAL' : ratio >= 1.3 ? 'WARNING' : 'INFO';
 
-      const rowScores = {};
-      metaAxes.forEach(ax => {
-        const v = scores[ax];
-        rowScores[ax] = v != null ? v.toFixed(5) : '–';
-      });
-
       anomalyRows.unshift({
-        frame:    pkt.frame_no,
-        ts:       pkt.timestamp ?? '–',
-        worst:    worstKey ?? '–',
-        scores:   rowScores,
-        maxRes:   maxRes.toFixed(5),
-        joints:   (anomalyJoints || []).map(j => `A${j}`).join(', ') || '–',
+        frame: frameNo,
+        ts: ts ?? '–',
+        worst: worstJoint ?? '–',
+        maxRes: (maxResidual ?? 0).toFixed(5),
+        joints: Array.isArray(anomalyJoints) ? anomalyJoints.map(j => `A${j}`).join(', ') : (worstJoint || '–'),
         severity: sev,
       });
       if (anomalyRows.length > 200) anomalyRows.pop();
@@ -782,24 +996,24 @@
     function renderTable() {
       const tbody = document.getElementById('rfTableBody');
       document.getElementById('tableCount').textContent = anomalyRows.length;
-      const span = 4 + metaAxes.length;
       if (anomalyRows.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="${span}" class="no-data">No anomalies detected yet.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" class="no-data">No anomalies detected yet.</td></tr>`;
         return;
       }
       tbody.innerHTML = anomalyRows.slice(0, 50).map(r => `
         <tr>
           <td>${r.frame}</td>
-          <td style="font-size:0.78rem;color:#666;">${r.ts}</td>
-          <td class="warn-cell">${r.worst}</td>
-          ${metaAxes.map(ax => `<td>${r.scores[ax] ?? '–'}</td>`).join('')}
-          <td class="anomaly-cell">${r.maxRes}</td>
-          <td class="warn-cell">${r.joints}</td>
+          <td class="td-time">${r.ts}</td>
+          <td class="td-joint">${r.worst}</td>
+          <td class="td-score">${r.maxRes}</td>
+          <td class="td-axes">${r.joints}</td>
           <td><span class="sev-badge ${r.severity}">${r.severity}</span></td>
         </tr>`).join('');
     }
 
-    // ── Axis chip animation ───────────────────────────────────
+    // ================================================================
+    // AXIS CHIP ANIMATION
+    // ================================================================
     function flashChip(ax) {
       const chip = document.getElementById(`chip${ax}`);
       if (!chip) return;
@@ -811,10 +1025,28 @@
       document.getElementById(`chip${ax}`)?.classList.toggle('active', active);
     }
 
-    // ── WebSocket ─────────────────────────────────────────────
+    // ================================================================
+    // STATS UPDATE
+    // ================================================================
+    function updateStatBadge() {
+      document.getElementById('statTotal').textContent = livePtsCount > 0 ? livePtsCount : '–';
+      document.getElementById('statAnom').textContent  = liveAnomCount > 0 ? liveAnomCount : '–';
+
+      // Per-axis badge
+      if (currentMode === 'axis' && currentAxis && axisAnomCounts[currentAxis]) {
+        const info = axisAnomCounts[currentAxis];
+        const txt = info.anoms > 0
+          ? `⚠ ${info.anoms} anomaly (${info.pts} pts)`
+          : `${info.pts} pts`;
+        document.getElementById('axisAnomalyBadge').textContent = txt;
+      }
+    }
+
+    // ================================================================
+    // LIVE MODE — WebSocket
+    // ================================================================
     let ws;
     const wsStatus = document.getElementById('statWsStatus');
-    const liveDot  = document.getElementById('liveDot');
 
     function connectWS() {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -823,13 +1055,12 @@
       ws.onopen = () => {
         wsStatus.textContent = 'Connected';
         wsStatus.className   = 'value green';
-        liveDot.classList.remove('off');
+        document.getElementById('statSource').textContent = 'WebSocket Live';
       };
 
       ws.onclose = () => {
         wsStatus.textContent = 'Disconnected';
         wsStatus.className   = 'value red';
-        liveDot.classList.add('off');
         setTimeout(connectWS, 3000);
       };
 
@@ -839,72 +1070,214 @@
       };
 
       ws.onmessage = evt => {
+        if (!liveMode) return;   // ignore WS packets in replay mode
         let pkt;
         try { pkt = JSON.parse(evt.data); } catch { return; }
 
         const scores     = pkt.rf_scores    || {};
         const thresholds = pkt.rf_thresholds || null;
         const hasRfData  = Object.keys(scores).length > 0;
-
-	        if (!dataReceived && hasRfData) {
-	          dataReceived = true;
-	          document.getElementById('noDataOverlay').style.display = 'none';
-	          renderTable();
-	          if (thresholds) {
-	            metaAxes.forEach(ax => {
-	              if (metaThresholds[ax] == null && thresholds[ax] != null)
-	                metaThresholds[ax] = thresholds[ax];
-	            });
-          }
-        }
-
         if (!hasRfData) return;
 
-	        frameCount++;
-	        document.getElementById('statFrames').textContent = frameCount;
-	
-	        pushToChart(pkt.frame_no, scores, thresholds || metaThresholds);
-	        metaAxes.forEach(ax => setChipActive(ax, true));
+        livePtsCount++;
+        metaAxes.forEach(ax => setChipActive(ax, true));
+
+        // Update axis-specific counts
+        metaAxes.forEach(ax => {
+          if (!axisAnomCounts[ax]) axisAnomCounts[ax] = { pts: 0, anoms: 0 };
+          axisAnomCounts[ax].pts++;
+        });
+
+        pushToChart(pkt.frame_no, scores, thresholds || metaThresholds);
 
         if (pkt.rf_anomaly) {
-          anomalyCount++;
-          document.getElementById('statAnomalies').textContent  = anomalyCount;
-          document.getElementById('statWorstJoint').textContent = pkt.rf_worst_joint ? `A${pkt.rf_worst_joint}` : '–';
-          (pkt.rf_anomaly_joints || []).forEach(j => flashChip(`A${j}`));
-          addAnomalyRow(pkt, scores, thresholds || metaThresholds, pkt.rf_anomaly_joints);
+          liveAnomCount++;
+          const worstKey = pkt.rf_worst_joint ? `A${pkt.rf_worst_joint}` : null;
+          const anomJoints = pkt.rf_anomaly_joints || [];
+
+          anomJoints.forEach(j => {
+            const ax = `A${j}`;
+            if (axisAnomCounts[ax]) axisAnomCounts[ax].anoms++;
+            flashChip(ax);
+          });
+
+          addAnomalyRow(
+            pkt.frame_no,
+            pkt.timestamp ?? '–',
+            worstKey,
+            pkt.rf_max_residual ?? 0,
+            anomJoints,
+            thresholds || metaThresholds
+          );
         }
+
+        updateStatBadge();
       };
     }
 
-    connectWS();
+    // ================================================================
+    // REPLAY MODE — /errors endpoint (TORQUE_RF events)
+    // ================================================================
+    let replayDataset = [];
+    let replayTimer2  = null;
+    let replayIdx     = 0;
 
-    // ── AI Chat ──────────────────────────────────────────────
-    function sendChat(e) {
-      e.preventDefault();
-      const input = document.getElementById('chat-input');
-      const msg   = input.value.trim();
-      if (!msg) return;
+    async function loadReplayData() {
+      document.getElementById('statSource').textContent = 'Loading…';
+      try {
+        const res = await fetch('/api/rf/events', { cache: 'no-store' });
+        const json = res.ok ? await res.json() : { events: [] };
+        const events = json.events || [];
 
-      const box = document.getElementById('chat-messages');
-      box.innerHTML += `<div class="chat-msg user">You: ${msg}</div>`;
-      input.value = '';
-      box.scrollTop = box.scrollHeight;
+        // Filter only TORQUE_RF for chart/table in replay
+        replayDataset = events.filter(e => e.type === 'TORQUE_RF');
 
-      fetch('/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msg }),
-      })
-        .then(r => r.json())
-        .then(d => {
-          box.innerHTML += `<div class="chat-msg bot">AI: ${d.reply ?? '–'}</div>`;
-          box.scrollTop = box.scrollHeight;
-        })
-        .catch(() => {
-          box.innerHTML += `<div class="chat-msg error">AI: Connection error.</div>`;
-          box.scrollTop = box.scrollHeight;
-        });
+        document.getElementById('statSource').textContent =
+          replayDataset.length > 0 ? `${replayDataset.length} RF events` : 'No RF events yet';
+        document.getElementById('statTotal').textContent = String(replayDataset.length);
+
+        startReplay();
+      } catch(e) {
+        console.error('[rf] replay load error:', e);
+        document.getElementById('statSource').textContent = 'Load error';
+      }
     }
+
+    function startReplay() {
+      stopReplay();
+      if (!chart) return;
+
+      // Reset chart
+      buildChartForMode();
+      anomalyRows = [];
+      liveAnomCount = 0;
+      renderTable();
+
+      if (replayDataset.length === 0) {
+        document.getElementById('statTotal').textContent = '0';
+        document.getElementById('statAnom').textContent  = '–';
+        return;
+      }
+
+      replayIdx = 0;
+      replayTimer2 = setInterval(() => {
+        if (replayIdx >= replayDataset.length) { stopReplay(); return; }
+
+        const ev    = replayDataset[replayIdx++];
+        const meta  = ev.meta || {};
+        const frameNo = meta.frame_no ?? replayIdx;
+        const scores  = meta.rf_scores || {};
+        const thrs    = metaThresholds;
+        const worstJoint = meta.worst_joint ? `A${meta.worst_joint}` : null;
+        const maxRes     = meta.score ?? 0;
+        const anomJoints = meta.anomaly_joints || (worstJoint ? [meta.worst_joint] : []);
+
+        pushToChart(frameNo, scores, thrs);
+        liveAnomCount++;
+        metaAxes.forEach(ax => {
+          if (scores[ax] !== undefined) setChipActive(ax, true);
+        });
+        if (worstJoint) flashChip(worstJoint);
+
+        addAnomalyRow(frameNo, ev.timestamp ?? '–', worstJoint, maxRes, anomJoints, thrs);
+
+        document.getElementById('statTotal').textContent  = String(replayIdx);
+        document.getElementById('statAnom').textContent   = String(liveAnomCount);
+      }, LIVE_INTERVAL_MS);
+    }
+
+    function stopReplay() {
+      if (replayTimer2) { clearInterval(replayTimer2); replayTimer2 = null; }
+    }
+
+    // ================================================================
+    // LIVE MODE TOGGLE
+    // ================================================================
+    function setLiveMode(on, save = true) {
+      liveMode = on;
+      if (save) localStorage.setItem('mindtwin_global_live_mode', String(on));
+
+      const toggle = document.getElementById('liveModeToggle');
+      if (toggle && toggle.checked !== on) toggle.checked = on;
+
+      document.getElementById('liveIndicator').classList.toggle('on', on);
+
+      if (on) {
+        stopReplay();
+        buildChartForMode();
+        anomalyRows = [];
+        liveAnomCount = 0;
+        livePtsCount  = 0;
+        renderTable();
+        document.getElementById('statSource').textContent = 'WebSocket Live';
+        document.getElementById('statTotal').textContent  = '0';
+        document.getElementById('statAnom').textContent   = '–';
+        // WS already connected; packets will flow
+      } else {
+        // Replay mode
+        loadReplayData();
+      }
+    }
+
+    document.getElementById('liveModeToggle').addEventListener('change', function () {
+      setLiveMode(this.checked, true);
+    });
+
+    window.addEventListener('storage', e => {
+      if (e.key === 'mindtwin_global_live_mode') {
+        const isLive = e.newValue === 'true';
+        if (liveMode !== isLive) setLiveMode(isLive, false);
+      }
+    });
+
+    // ================================================================
+    // CHAT
+    // ================================================================
+    document.getElementById('chat-toggle').onclick = () =>
+      document.getElementById('chatbot').classList.toggle('hidden');
+
+    document.getElementById('send-btn').onclick = sendChat;
+    document.getElementById('chat-input').addEventListener('keypress', e => {
+      if (e.key === 'Enter') sendChat();
+    });
+
+    async function sendChat() {
+      const inp = document.getElementById('chat-input');
+      const msg = inp.value.trim();
+      if (!msg) return;
+      const box = document.getElementById('chat-messages');
+      box.innerHTML += `<div class="msg-user"><b>You:</b> ${msg}</div>`;
+      inp.value = '';
+      try {
+        const res = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg })
+        });
+        const d = await res.json();
+        box.innerHTML += `<div class="msg-ai"><b>AI:</b> ${d.reply ?? '–'}</div>`;
+      } catch {
+        box.innerHTML += `<div class="msg-ai"><b>AI:</b> Connection error.</div>`;
+      }
+      box.scrollTop = box.scrollHeight;
+    }
+
+    // ================================================================
+    // INIT
+    // ================================================================
+    const savedLive = localStorage.getItem('mindtwin_global_live_mode');
+    if (savedLive !== null) {
+      liveMode = savedLive === 'true';
+      document.getElementById('liveModeToggle').checked = liveMode;
+    }
+    document.getElementById('liveIndicator').classList.toggle('on', liveMode);
+
+    // Load meta first, then connect WS and optionally load replay
+    createChart();
+    loadMeta().then(() => {
+      connectWS();
+      if (!liveMode) loadReplayData();
+    });
   </script>
 
 </body>

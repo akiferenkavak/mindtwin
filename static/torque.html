@@ -501,8 +501,8 @@
     <h1>Torque Monitor</h1>
     <p>
       6 torque axis için hareketli anomaly grafiği.
-      PCA veya Autoencoder anomaly gelirse değer 1'e çıkar.
-      Combined anomaly gelirse değer 2'ye çıkar.
+      PCA, Autoencoder veya Random Forest anomaly gelirse değer 1'e çıkar.
+      Combined anomaly gelirse değer 2'ye çıkar. PCA+AE+RF combined ise değer 3 olur.
     </p>
   </div>
 
@@ -1156,16 +1156,19 @@
       sourceText.textContent = 'Loading result files…';
 
       try {
-        const [pcaRes, aeRes] = await Promise.all([
-          fetch('/api/pca/results', { cache: 'no-store' }),
-          fetch('/api/autoencoder/results', { cache: 'no-store' })
+        const [pcaRes, aeRes, rfRes] = await Promise.all([
+          fetch('/api/pca/results',      { cache: 'no-store' }),
+          fetch('/api/autoencoder/results', { cache: 'no-store' }),
+          fetch('/api/rf/events',         { cache: 'no-store' }),
         ]);
 
         const pcaJson = pcaRes.ok ? await pcaRes.json() : {};
-        const aeJson = aeRes.ok ? await aeRes.json() : {};
+        const aeJson  = aeRes.ok  ? await aeRes.json()  : {};
+        const rfJson  = rfRes.ok  ? await rfRes.json()  : { events: [] };
 
         const pcaAnomalies = [];
-        const aeAnomalies = [];
+        const aeAnomalies  = [];
+        const rfAnomalies  = [];
 
         const pcaPerFeature = pcaJson.per_feature || {};
         for (const [feature, items] of Object.entries(pcaPerFeature)) {
@@ -1209,78 +1212,68 @@
           }
         }
 
-        const pcaKeys = new Set();
-        const aeKeys = new Set();
+        // RF events from live session (TORQUE_RF)
+        const rfEvents = (rfJson.events || []).filter(e => e.type === 'TORQUE_RF');
+        for (const ev of rfEvents) {
+          const meta = ev.meta || {};
+          const wj = meta.worst_joint;
+          if (wj == null) continue;
+          const feature = normalizeFeatureName(String(wj));
+          if (!feature) continue;
+          const ts = ev.timestamp || '';
+          rfAnomalies.push({
+            secondKey: extractSecond(ts),
+            feature,
+            timestamp: ts,
+            type: 'rf'
+          });
+        }
 
-        pcaAnomalies.forEach(item => {
-          if (item.secondKey && item.feature) {
-            pcaKeys.add(`${item.secondKey}|${item.feature}`);
-          }
-        });
+        // Build key sets for each model
+        const pcaKeys  = new Set();
+        const aeKeys   = new Set();
+        const rfKeys   = new Set();
 
-        aeAnomalies.forEach(item => {
-          if (item.secondKey && item.feature) {
-            aeKeys.add(`${item.secondKey}|${item.feature}`);
-          }
-        });
+        pcaAnomalies.forEach(item => { if (item.secondKey && item.feature) pcaKeys.add(`${item.secondKey}|${item.feature}`); });
+        aeAnomalies.forEach(item  => { if (item.secondKey && item.feature) aeKeys.add(`${item.secondKey}|${item.feature}`); });
+        rfAnomalies.forEach(item  => { if (item.secondKey && item.feature) rfKeys.add(`${item.secondKey}|${item.feature}`); });
 
-        const combinedKeys = new Set();
-        pcaKeys.forEach(key => {
-          if (aeKeys.has(key)) {
-            combinedKeys.add(key);
-          }
-        });
-
+        // Determine level per key
+        const allKeys = new Set([...pcaKeys, ...aeKeys, ...rfKeys]);
         const eventMap = new Map();
 
-        pcaAnomalies.forEach(item => {
-          if (!item.secondKey || !item.feature) return;
+        for (const key of allKeys) {
+          const hasPca = pcaKeys.has(key);
+          const hasAe  = aeKeys.has(key);
+          const hasRf  = rfKeys.has(key);
+          const count  = (hasPca ? 1 : 0) + (hasAe ? 1 : 0) + (hasRf ? 1 : 0);
+          const level  = count >= 3 ? 3 : count === 2 ? 2 : 1;
+          const [secondKey, feature] = key.split('|');
 
-          const key = `${item.secondKey}|${item.feature}`;
-          const mapKey = combinedKeys.has(key)
-            ? `combined|${key}`
-            : `pca|${key}`;
+          // Find one item for timestamp
+          const anyItem =
+            (hasPca && pcaAnomalies.find(a => `${a.secondKey}|${a.feature}` === key)) ||
+            (hasAe  && aeAnomalies.find(a  => `${a.secondKey}|${a.feature}` === key)) ||
+            (hasRf  && rfAnomalies.find(a  => `${a.secondKey}|${a.feature}` === key));
 
-          if (!eventMap.has(mapKey)) {
-            eventMap.set(mapKey, {
-              sortKey: item.secondKey,
-              secondKey: item.secondKey,
-              feature: item.feature,
-              type: combinedKeys.has(key) ? 'combined' : 'pca'
-            });
-          }
-        });
+          eventMap.set(key, {
+            sortKey: secondKey || '',
+            secondKey,
+            feature,
+            level,
+            type: level >= 3 ? 'triple' : level === 2 ? 'combined' : (hasPca ? 'pca' : hasAe ? 'ae' : 'rf')
+          });
+        }
 
-        aeAnomalies.forEach(item => {
-          if (!item.secondKey || !item.feature) return;
-
-          const key = `${item.secondKey}|${item.feature}`;
-
-          if (combinedKeys.has(key)) {
-            return;
-          }
-
-          const mapKey = `ae|${key}`;
-
-          if (!eventMap.has(mapKey)) {
-            eventMap.set(mapKey, {
-              sortKey: item.secondKey,
-              secondKey: item.secondKey,
-              feature: item.feature,
-              type: 'ae'
-            });
-          }
-        });
-
-        replayEvents = [...eventMap.values()].sort((a, b) => {
-          return String(a.sortKey).localeCompare(String(b.sortKey));
-        });
+        replayEvents = [...eventMap.values()].sort((a, b) =>
+          String(a.sortKey).localeCompare(String(b.sortKey))
+        );
 
         dataLoaded = true;
 
         sourceText.textContent = liveMode ? 'Events /errors' : 'Result files';
-        eventText.textContent = liveMode ? `${seenTorqueErrorEvents.size} torque events` : `${replayEvents.length} replay events`;
-        frameText.textContent = liveMode ? 'Live' : `0 / ${replayEvents.length}`;
+        eventText.textContent  = liveMode ? `${seenTorqueErrorEvents.size} torque events` : `${replayEvents.length} replay events`;
+        frameText.textContent  = liveMode ? 'Live' : `0 / ${replayEvents.length}`;
 
         if (!liveMode) {
           startReplay();
@@ -1345,15 +1338,12 @@
 
         const frameNo = replayIndex;
         const valuesByFeature = {};
+        const level = event.level ?? (event.type === 'combined' ? 2 : event.type === 'triple' ? 3 : 1);
 
-        if (event.type === 'combined') {
-          valuesByFeature[event.feature] = 2;
-        } else {
-          valuesByFeature[event.feature] = 1;
-        }
+        valuesByFeature[event.feature] = level;
 
-	        pushFrame(frameNo, valuesByFeature);
-	        incrementAxisCount(event.feature, event.type === 'combined' ? 2 : 1);
+        pushFrame(frameNo, valuesByFeature);
+        incrementAxisCount(event.feature, level);
 
         const pct = Math.round((replayIndex / replayEvents.length) * 100);
         document.getElementById('replayBarFill').style.width = pct + '%';
@@ -1363,9 +1353,11 @@
         frameText.textContent = `${replayIndex} / ${replayEvents.length}`;
 
         const axis = event.feature.replace('TORQUE_', '');
-        const label = event.type === 'combined'
+        const label = level >= 3
+          ? 'PCA + AE + RF combined level 3'
+          : level === 2
           ? 'Combined anomaly level 2'
-          : 'PCA / Autoencoder anomaly level 1';
+          : `${event.type?.toUpperCase() || 'Model'} anomaly level 1`;
 
         statusDiv.innerHTML =
           `<b style="font-size:1rem;color:#4da6ff;">Replay Event</b><br>` +

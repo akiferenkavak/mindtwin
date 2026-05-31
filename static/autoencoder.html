@@ -703,9 +703,14 @@
     // ================================================================
     async function loadData() {
       try {
+        document.getElementById('statSource').textContent = 'Loading…';
+        document.getElementById('statSource').className = 'value';
+
         const res = await fetch('/api/autoencoder/results', { cache: 'no-store' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         allData = await res.json();
+
+        if (allData.error) throw new Error('Server error: ' + allData.error);
 
         // Augment with frame numbers
         const timeToFrame = {};
@@ -728,10 +733,7 @@
               if (allData.multiple && allData.multiple[i]) {
                 const mPt = allData.multiple[i];
                 const mThr = mPt.threshold || 1;
-                // Scale the multiple-feature shape to the single-feature threshold
                 fakeError = (mPt.error / mThr) * thr;
-                
-                // Ensure the fake error doesn't accidentally cross the threshold visually
                 if (fakeError >= thr && thr > 0) {
                   fakeError = thr * 0.85;
                 }
@@ -743,16 +745,14 @@
                 threshold: thr,
                 is_anomaly: false,
                 severity_ratio: 0,
-                timestamp: allData.multiple && allData.multiple[i] ? allData.multiple[i].timestamp : ''
+                timestamp: (allData.multiple && allData.multiple[i]) ? (allData.multiple[i].timestamp || '') : ''
               };
             }
             
             if (arr && arr.length > 0) {
               arr.forEach(pt => {
                 let fNo = pt.timestamp ? timeToFrame[pt.timestamp] : undefined;
-                // Fallback to sequential placement if no timestamp match
                 if (fNo === undefined && pt.frame_no !== undefined) fNo = pt.frame_no;
-                
                 if (fNo !== undefined && fNo >= 0 && fNo < maxLen) {
                   fullArray[fNo] = { ...pt, frame_no: fNo };
                 }
@@ -775,10 +775,10 @@
 
       } catch (e) {
         console.error('[autoencoder] Load error:', e);
-        document.getElementById('statSource').textContent = 'Error loading';
+        document.getElementById('statSource').textContent = 'Error: ' + e.message;
         document.getElementById('statSource').className = 'value red';
         document.getElementById('aeTableBody').innerHTML =
-          '<tr><td colspan="7" class="no-data">Could not load data from /api/autoencoder/results.<br>Make sure the backend is running.</td></tr>';
+          `<tr><td colspan="7" class="no-data">Could not load data from /api/autoencoder/results.<br><small style="color:#666">${e.message}</small></td></tr>`;
       }
     }
 
@@ -1001,68 +1001,52 @@
       const wsUrl = `ws://${location.host}/ws/torque`;
       liveWs = new WebSocket(wsUrl);
 
-      let isFirstLiveMessage = true;
+      let lastFrameNo = -1;
+      let totalPlayed = 0;
+      let totalAnomalies = 0;
 
       liveWs.onmessage = (event) => {
         if (!liveMode) return;
         const pkt = JSON.parse(event.data);
-        const targetFrame = pkt.frame_no;
+        const frameNo = pkt.frame_no;
+        if (frameNo === lastFrameNo) return;  // no duplicate
+        lastFrameNo = frameNo;
 
-        if (isFirstLiveMessage) {
-          while (liveIndex < liveDataset.length && liveDataset[liveIndex].frame_no < targetFrame) {
-            liveIndex++;
-          }
-          isFirstLiveMessage = false;
+        // Cyclic lookup: always pick the matching row from precomputed dataset
+        const d = liveDataset[frameNo % liveDataset.length];
+        if (!d) return;
+
+        // Use actual live frame_no for X axis (not dataset frame_no)
+        const xVal = frameNo;
+
+        chart.data.datasets[0].data.push({ x: xVal, y: d.is_anomaly ? null : d.error });
+        chart.data.datasets[0].rawPoints.push({ ...d, frame_no: xVal });
+        chart.data.datasets[1].data.push({ x: xVal, y: d.threshold });
+        chart.data.datasets[2].data.push({ x: xVal, y: d.is_anomaly ? d.error : null });
+        chart.data.datasets[2].rawPoints.push({ ...d, frame_no: xVal });
+
+        // Sliding window: keep last 80 points visible
+        chart.options.scales.x.min = Math.max(xVal - 80 + 1, 0);
+        chart.options.scales.x.max = xVal;
+
+        // Housekeeping: prevent memory growth
+        if (chart.data.datasets[0].data.length > 160) {
+          chart.data.datasets.forEach(ds => {
+            if (ds.data.length > 160) ds.data.shift();
+            if (ds.rawPoints && ds.rawPoints.length > 160) ds.rawPoints.shift();
+          });
         }
 
-        let updated = false;
-        while (liveIndex < liveDataset.length && liveDataset[liveIndex].frame_no <= targetFrame) {
-          const d = liveDataset[liveIndex];
-          liveIndex++;
-          updated = true;
+        chart.update('none');
 
-          // Normal line
-          chart.data.datasets[0].data.push({ x: d.frame_no, y: d.is_anomaly ? null : d.error });
-          chart.data.datasets[0].rawPoints.push(d);
+        totalPlayed++;
+        if (d.is_anomaly) totalAnomalies++;
+        document.getElementById('statTotal').textContent = totalPlayed.toLocaleString();
+        document.getElementById('statAnom').textContent  = totalAnomalies.toLocaleString();
+      };
 
-          // Threshold
-          chart.data.datasets[1].data.push({ x: d.frame_no, y: d.threshold });
-
-          // Anomaly scatter
-          chart.data.datasets[2].data.push({ x: d.frame_no, y: d.is_anomaly ? d.error : null });
-          chart.data.datasets[2].rawPoints.push(d);
-
-          // Sliding window: keep last 80 points visible on X scale bounds
-          chart.options.scales.x.min = Math.max(d.frame_no - 80 + 1, 0);
-          chart.options.scales.x.max = d.frame_no;
-
-          // Housekeeping: prevent memory footprint growth
-          if (chart.data.datasets[0].data.length > 160) {
-            chart.data.datasets.forEach(ds => {
-              if (ds.data.length > 160) ds.data.shift();
-              if (ds.rawPoints && ds.rawPoints.length > 160) ds.rawPoints.shift();
-            });
-          }
-        }
-
-        if (updated) {
-          chart.update('none');
-
-          // --- Progressive Stats and Table Update ---
-          const playedDataset = liveDataset.slice(0, liveIndex);
-          const playedAnomalies = playedDataset.filter(x => x.is_anomaly);
-
-          // Update stats bar values for the played portion
-          document.getElementById('statTotal').textContent = playedDataset.length.toLocaleString();
-          document.getElementById('statAnom').textContent  = playedAnomalies.length.toLocaleString();
-
-          // Update details table to only show anomalies up to the current frame
-          renderTable(playedAnomalies);
-        }
-
-        if (liveIndex >= liveDataset.length) {
-          stopLive();
-        }
+      liveWs.onclose = () => {
+        document.getElementById('liveIndicator').classList.remove('on');
       };
     }
 

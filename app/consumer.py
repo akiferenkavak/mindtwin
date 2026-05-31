@@ -15,6 +15,7 @@ from pathlib import Path
 import google.generativeai as genai
 from dotenv import load_dotenv
 from fastapi import Request
+from fastapi.middleware.gzip import GZipMiddleware
 from collections import deque
 from typing import Optional
 
@@ -404,8 +405,6 @@ def log_torque_model_event(
         msg = f"Autoencoder Torque Error: A{worst}"
     elif event_type == "TORQUE_PCA":
         msg = f"PCA Torque Error: A{worst}"
-    elif event_type == "TORQUE_IFOREST":
-        msg = f"IForest Torque Error: A{worst}"
     elif event_type == "TORQUE_COMBINED":
         msg = f"DOUBLE ANOMALY (PCA + AE): A{worst}"
     else:
@@ -500,14 +499,7 @@ def run_torque_server() -> None:
                             extra_meta={"worst_joint": worst_j} if worst_j else None,
                         )
 
-                    if model_payload.get("iforest_anomaly"):
-                        log_torque_model_event(
-                            "TORQUE_IFOREST",
-                            model_payload["iforest_score"],
-                            model_payload["iforest_threshold"],
-                            pkt["frame_no"],
-                            pkt["timestamp"],
-                        )
+
 
                     # -----------------------------------------------
                     # AUTOENCODER injection (frame-index döngüsel eşleştirme)
@@ -589,7 +581,6 @@ def run_torque_server() -> None:
                     # -----------------------------------------------
                     any_model_anomaly = (
                         model_payload.get("pca_anomaly")
-                        or model_payload.get("iforest_anomaly")
                         or pkt.get("ae_anomaly", False)
                     )
                     if pkt.get("anomaly") and any_model_anomaly:
@@ -601,8 +592,6 @@ def run_torque_server() -> None:
                             models_active = []
                             if model_payload.get("pca_anomaly"):
                                 models_active.append(f"PCA={model_payload['pca_score']:.4f}")
-                            if model_payload.get("iforest_anomaly"):
-                                models_active.append(f"IForest={model_payload['iforest_score']:.4f}")
                             if pkt.get("ae_anomaly"):
                                 models_active.append(f"AE={pkt['ae_score']:.4f}")
                             event_tt = {
@@ -644,6 +633,7 @@ def run_torque_server() -> None:
 # FASTAPI (UI)
 # ---------------------------
 app = FastAPI()
+app.add_middleware(GZipMiddleware, minimum_size=1000)  # compress responses > 1KB
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
@@ -686,7 +676,10 @@ def autoencoder_results():
             with open(results_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             data = translate_ae_data(data)
-            return JSONResponse(content=data)
+            return JSONResponse(
+                content=data,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+            )
         except Exception as e:
             print("[autoencoder] Error reading results JSON:", e)
             return JSONResponse(
@@ -694,7 +687,6 @@ def autoencoder_results():
                 status_code=500
             )
     else:
-        # Return empty scaffold if file not yet generated
         return JSONResponse(content={
             "meta": {"note": "Run autoencoder/export_results.py to generate results"},
             "multiple": [],
@@ -710,7 +702,10 @@ def pca_results():
         try:
             with open(results_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return JSONResponse(content=data)
+            return JSONResponse(
+                content=data,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+            )
         except Exception as e:
             print("[pca] Error reading results JSON:", e)
             return JSONResponse(

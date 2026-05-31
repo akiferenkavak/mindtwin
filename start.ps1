@@ -30,7 +30,7 @@ Write-Host "[3/5] Backend baslatiliyor (port 8000)..." -ForegroundColor Cyan
 Start-Process powershell -ArgumentList "-NoExit","-Command",
     "Set-Location '$ROOT'; & '$PY' app\consumer.py"
 
-Start-Sleep -Seconds 2
+Start-Sleep -Seconds 4
 
 # 5) Thermal producer
 Write-Host "[4/5] Thermal producer baslatiliyor..." -ForegroundColor Cyan

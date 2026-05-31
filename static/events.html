@@ -830,41 +830,19 @@ async function loadStaticResults() {
    LIVE MODE POLLING
 ═══════════════════════════════════════════════════════════════════ */
 
-let seenEventsStr = new Set();
-let isFirstLivePoll = false;
-
 async function fetchEvents() {
   try {
     const res = await fetch('/errors', { cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
 
-    if (isFirstLivePoll) {
-      localStorage.setItem('mindtwin_live_start_index', data.length);
-      data.forEach(e => seenEventsStr.add(JSON.stringify(e)));
-      isFirstLivePoll = false;
-      return;
-    }
+    // Always keep all events; replace cachedEvents with latest from server
+    cachedEvents = data.slice(-500);
 
-    let startIndex = parseInt(localStorage.getItem('mindtwin_live_start_index') || '0', 10);
-    const relevantData = data.slice(startIndex);
+    statusDiv.textContent = `Updated: ${new Date().toLocaleTimeString()} — ${cachedEvents.length} event(s) received`;
+    statusDiv.style.color = '#ccc';
+    renderLiveEvents(cachedEvents);
 
-    let newlyFound = false;
-    relevantData.forEach(e => {
-      const str = JSON.stringify(e);
-      if (!seenEventsStr.has(str)) {
-        seenEventsStr.add(str);
-        cachedEvents.push(e);
-        if (cachedEvents.length > 500) cachedEvents.shift();
-        newlyFound = true;
-      }
-    });
-
-    if (newlyFound) {
-      statusDiv.textContent = `Updated: ${new Date().toLocaleTimeString()}`;
-      statusDiv.style.color = '#ccc';
-      renderLiveEvents(cachedEvents);
-    }
   } catch (e) {
     statusDiv.textContent = `Cannot load /errors — ${e.message}`;
     statusDiv.style.color = '#f87171';
@@ -902,17 +880,12 @@ function setLiveMode(on, saveToStorage = true, isManualToggle = false) {
   if (on) {
     timeFilterSelect.disabled = true;
     modeInfoDiv.style.display = 'none';
-    statusDiv.textContent = 'Live mode — listening for new events...';
+    statusDiv.textContent = 'Live mode — connecting...';
     statusDiv.style.color = '#ccc';
-    
+
     if (isManualToggle) {
       cachedEvents = [];
-      seenEventsStr.clear();
-      isFirstLivePoll = true;
-      localStorage.removeItem('mindtwin_live_start_index');
       renderLiveEvents(cachedEvents);
-    } else {
-      isFirstLivePoll = false;
     }
     
     startPolling();

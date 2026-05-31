@@ -716,7 +716,7 @@
                   const val = Math.round(value);
                   if (val < 0) return '';
                   const d = liveDataset.find(item => item.frame_no === val);
-                  if (d) {
+                  if (d && d.timestamp) {
                     const t = (d.timestamp || '').split('.')[0];
                     return `F${val} (${t})`;
                   }
@@ -815,9 +815,14 @@
     // ================================================================
     async function loadData() {
       try {
+        document.getElementById('statSource').textContent = 'Loading…';
+        document.getElementById('statSource').className = 'value';
+
         const res = await fetch('/api/pca/results', { cache: 'no-store' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         allData = await res.json();
+
+        if (allData.error) throw new Error('Server error: ' + allData.error);
 
         // Augment frame numbers
         if (allData.overall) {
@@ -846,10 +851,10 @@
 
       } catch (e) {
         console.error('[pca] Load error:', e);
-        document.getElementById('statSource').textContent = 'Error loading';
+        document.getElementById('statSource').textContent = 'Error: ' + e.message;
         document.getElementById('statSource').className = 'value red';
         document.getElementById('pcaTableBody').innerHTML =
-          '<tr><td colspan="8" class="no-data">Could not load data from /api/pca/results.<br>Run <code>models/stats/export_pca_results.py</code> first.</td></tr>';
+          `<tr><td colspan="8" class="no-data">Could not load data from /api/pca/results.<br><small style="color:#666">${e.message}</small></td></tr>`;
       }
     }
 
@@ -1118,63 +1123,54 @@
       const wsUrl = `ws://${location.host}/ws/torque`;
       liveWs = new WebSocket(wsUrl);
 
-      let isFirstLiveMessage = true;
+      let lastFrameNo = -1;
+      let totalPlayed = 0;
+      let totalAnomalies = 0;
 
       liveWs.onmessage = (event) => {
         if (!liveMode) return;
         const pkt = JSON.parse(event.data);
-        const targetFrame = pkt.frame_no;
+        const frameNo = pkt.frame_no;
+        if (frameNo === lastFrameNo) return;  // skip duplicates
+        lastFrameNo = frameNo;
 
-        if (isFirstLiveMessage) {
-          while (liveIndex < liveDataset.length && liveDataset[liveIndex].frame_no < targetFrame) {
-            liveIndex++;
-          }
-          isFirstLiveMessage = false;
+        // Cyclic lookup: pick the matching row from precomputed dataset
+        const d = liveDataset[frameNo % liveDataset.length];
+        if (!d) return;
+
+        const score = getScore(d);
+        const thr   = getThreshold(d);
+        const anom  = isAnomaly(d);
+        const xVal  = frameNo;  // use real frame_no for X axis
+
+        chart.data.datasets[0].data.push({ x: xVal, y: anom ? null : score });
+        chart.data.datasets[0].rawPoints.push({ ...d, frame_no: xVal });
+        chart.data.datasets[1].data.push({ x: xVal, y: thr });
+        chart.data.datasets[2].data.push({ x: xVal, y: anom ? score : null });
+        chart.data.datasets[2].rawPoints.push({ ...d, frame_no: xVal });
+
+        // Sliding window: keep last 120 points visible
+        chart.options.scales.x.min = Math.max(xVal - 120 + 1, 0);
+        chart.options.scales.x.max = xVal;
+
+        // Housekeeping: prevent memory growth
+        if (chart.data.datasets[0].data.length > 240) {
+          chart.data.datasets.forEach(ds => {
+            if (ds.data.length > 240) ds.data.shift();
+            if (ds.rawPoints && ds.rawPoints.length > 240) ds.rawPoints.shift();
+          });
         }
 
-        let updated = false;
-        while (liveIndex < liveDataset.length && liveDataset[liveIndex].frame_no <= targetFrame) {
-          const d = liveDataset[liveIndex];
-          liveIndex++;
-          updated = true;
+        chart.update('none');
 
-          const score = getScore(d);
-          const thr   = getThreshold(d);
-          const anom  = isAnomaly(d);
+        totalPlayed++;
+        if (anom) totalAnomalies++;
+        document.getElementById('statTotal').textContent = totalPlayed.toLocaleString();
+        document.getElementById('statAnom').textContent  = totalAnomalies.toLocaleString();
+      };
 
-          chart.data.datasets[0].data.push({ x: d.frame_no, y: anom ? null : score });
-          chart.data.datasets[0].rawPoints.push(d);
-          chart.data.datasets[1].data.push({ x: d.frame_no, y: thr });
-          chart.data.datasets[2].data.push({ x: d.frame_no, y: anom ? score : null });
-          chart.data.datasets[2].rawPoints.push(d);
-
-          // Sliding window: keep last 120 points
-          chart.options.scales.x.min = Math.max(d.frame_no - 120 + 1, 0);
-          chart.options.scales.x.max = d.frame_no;
-
-          // Housekeeping
-          if (chart.data.datasets[0].data.length > 240) {
-            chart.data.datasets.forEach(ds => {
-              if (ds.data.length > 240) ds.data.shift();
-              if (ds.rawPoints && ds.rawPoints.length > 240) ds.rawPoints.shift();
-            });
-          }
-        }
-
-        if (updated) {
-          chart.update('none');
-
-          // Progressive stats and table
-          const played   = liveDataset.slice(0, liveIndex);
-          const playedAn = played.filter(x => isAnomaly(x));
-          document.getElementById('statTotal').textContent = played.length.toLocaleString();
-          document.getElementById('statAnom').textContent  = playedAn.length.toLocaleString();
-          renderTable(playedAn);
-        }
-
-        if (liveIndex >= liveDataset.length) {
-          stopLive();
-        }
+      liveWs.onclose = () => {
+        document.getElementById('liveIndicator').classList.remove('on');
       };
     }
 

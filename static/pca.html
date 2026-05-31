@@ -687,6 +687,8 @@
     let liveTimer     = null;
     let liveIndex     = 0;
     let liveDataset   = [];    // the full array for current view
+    let livePtsCount  = 0;     // live: how many points have been played so far
+    let liveAnomCount = 0;     // live: how many anomalies have been seen so far
 
     const LIVE_INTERVAL_MS = 80;  // fast replay — 80ms per point
 
@@ -910,11 +912,16 @@
         : Object.keys(allData.per_feature);
 
       features.forEach(f => {
-        const rows      = (allData.per_feature[f] || []).length;
-        const anomCount = (allData.per_feature[f] || []).filter(r => r.is_anomaly).length;
+        const rows = (allData.per_feature[f] || []).length;
         const opt = document.createElement('option');
         opt.value = f;
-        opt.textContent = anomCount > 0 ? `${f}  ⚠ ${anomCount} anomaly` : `${f}  (${rows} pts)`;
+        // In live mode don't show static anomaly count — it's misleading before data streams in
+        if (!liveMode) {
+          const anomCount = (allData.per_feature[f] || []).filter(r => r.is_anomaly).length;
+          opt.textContent = anomCount > 0 ? `${f}  ⚠ ${anomCount} anomaly` : `${f}  (${rows} pts)`;
+        } else {
+          opt.textContent = `${f}  (${rows} pts)`;
+        }
         sel.appendChild(opt);
       });
 
@@ -1058,14 +1065,21 @@
 
       // Feature badge (per-feature mode)
       if (currentMode === 'feature') {
-        const feat = currentFeature || document.getElementById('featureSelect').value;
-        const fa = (allData.per_feature[feat] || []).filter(d => d.is_anomaly).length;
-        document.getElementById('featureAnomalyBadge').textContent =
-          `${fa} anomal${fa === 1 ? 'y' : 'ies'}`;
-        document.getElementById('featureAnomalyBadge').style.borderColor =
-          fa > 0 ? '#ef4444' : '#333';
-        document.getElementById('featureAnomalyBadge').style.color =
-          fa > 0 ? '#ef4444' : '#aaa';
+        if (liveMode) {
+          // In live mode show 0 until frames arrive — live counter updates via onmessage
+          document.getElementById('featureAnomalyBadge').textContent = '0 anomalies';
+          document.getElementById('featureAnomalyBadge').style.borderColor = '#333';
+          document.getElementById('featureAnomalyBadge').style.color = '#aaa';
+        } else {
+          const feat = currentFeature || document.getElementById('featureSelect').value;
+          const fa = (allData.per_feature[feat] || []).filter(d => d.is_anomaly).length;
+          document.getElementById('featureAnomalyBadge').textContent =
+            `${fa} anomal${fa === 1 ? 'y' : 'ies'}`;
+          document.getElementById('featureAnomalyBadge').style.borderColor =
+            fa > 0 ? '#ef4444' : '#333';
+          document.getElementById('featureAnomalyBadge').style.color =
+            fa > 0 ? '#ef4444' : '#aaa';
+        }
       }
 
       if (liveMode) {
@@ -1108,6 +1122,8 @@
       if (!liveDataset.length) return;
 
       liveIndex = 0;
+      livePtsCount = 0;
+      liveAnomCount = 0;
       createChart();
       const errorLabel = currentMode === 'overall' ? 'PCA Recon. Error' : `${currentFeature} Error`;
       chart.data.datasets = [
@@ -1170,6 +1186,27 @@
         if (anom) totalAnomalies++;
         document.getElementById('statTotal').textContent = totalPlayed.toLocaleString();
         document.getElementById('statAnom').textContent  = totalAnomalies.toLocaleString();
+
+        // Update feature badge and dropdown pts live (per-feature mode only)
+        if (currentMode === 'feature') {
+          livePtsCount = totalPlayed;
+          liveAnomCount = totalAnomalies;
+
+          // Update badge
+          const badge = document.getElementById('featureAnomalyBadge');
+          badge.textContent = `${totalAnomalies} anomal${totalAnomalies === 1 ? 'y' : 'ies'}`;
+          badge.style.borderColor = totalAnomalies > 0 ? '#ef4444' : '#333';
+          badge.style.color       = totalAnomalies > 0 ? '#ef4444' : '#aaa';
+
+          // Update dropdown option pts count for the active feature
+          const sel = document.getElementById('featureSelect');
+          const selOpt = sel.options[sel.selectedIndex];
+          if (selOpt) {
+            selOpt.textContent = totalAnomalies > 0
+              ? `${currentFeature}  ⚠ ${totalAnomalies} anomaly  (${totalPlayed} pts)`
+              : `${currentFeature}  (${totalPlayed} pts)`;
+          }
+        }
       };
 
       liveWs.onclose = () => {

@@ -581,6 +581,8 @@
     let liveTimer    = null;
     let liveIndex    = 0;
     let liveDataset  = [];     // the full array for current view
+    let livePtsCount = 0;      // live: how many points have been played so far
+    let liveAnomCount = 0;     // live: how many anomalies have been seen so far
 
     const LIVE_INTERVAL_MS = 1000;  // 1 saniyede bir nokta (saniye saniye ilerlesin)
 
@@ -798,10 +800,15 @@
 
       features.forEach(f => {
         const rows = (allData.single[f] || []).length;
-        const anomCount = (allData.single[f] || []).filter(r => r.is_anomaly).length;
         const opt = document.createElement('option');
         opt.value = f;
-        opt.textContent = anomCount > 0 ? `${f}  ⚠ ${anomCount} anomaly` : `${f}  (${rows} pts)`;
+        if (!liveMode) {
+          const anomCount = (allData.single[f] || []).filter(r => r.is_anomaly).length;
+          opt.textContent = anomCount > 0 ? `${f}  ⚠ ${anomCount} anomaly` : `${f}  (${rows} pts)`;
+        } else {
+          // Live mode: start from 0 pts, will be updated as frames arrive
+          opt.textContent = `${f}  (0 pts)`;
+        }
         sel.appendChild(opt);
       });
 
@@ -930,14 +937,21 @@
 
       // Feature badge (single mode)
       if (currentMode === 'single') {
-        const feat = currentFeature || document.getElementById('featureSelect').value;
-        const fa = (allData.single[feat] || []).filter(d => d.is_anomaly).length;
-        document.getElementById('featureAnomalyBadge').textContent =
-          `${fa} anomal${fa === 1 ? 'y' : 'ies'}`;
-        document.getElementById('featureAnomalyBadge').style.borderColor =
-          fa > 0 ? '#ef4444' : '#333';
-        document.getElementById('featureAnomalyBadge').style.color =
-          fa > 0 ? '#ef4444' : '#aaa';
+        if (liveMode) {
+          // In live mode show 0 until frames arrive — live counter updates via onmessage
+          document.getElementById('featureAnomalyBadge').textContent = '0 anomalies';
+          document.getElementById('featureAnomalyBadge').style.borderColor = '#333';
+          document.getElementById('featureAnomalyBadge').style.color = '#aaa';
+        } else {
+          const feat = currentFeature || document.getElementById('featureSelect').value;
+          const fa = (allData.single[feat] || []).filter(d => d.is_anomaly).length;
+          document.getElementById('featureAnomalyBadge').textContent =
+            `${fa} anomal${fa === 1 ? 'y' : 'ies'}`;
+          document.getElementById('featureAnomalyBadge').style.borderColor =
+            fa > 0 ? '#ef4444' : '#333';
+          document.getElementById('featureAnomalyBadge').style.color =
+            fa > 0 ? '#ef4444' : '#aaa';
+        }
       }
 
       if (liveMode) {
@@ -985,6 +999,8 @@
       if (!liveDataset.length) return;
 
       liveIndex = 0;
+      livePtsCount = 0;
+      liveAnomCount = 0;
       createChart();
       const errorLabel = currentMode === 'multiple' ? 'Reconstruction Error' : `${currentFeature} Error`;
       chart.data.datasets = [
@@ -1046,6 +1062,27 @@
         if (d.is_anomaly) totalAnomalies++;
         document.getElementById('statTotal').textContent = totalPlayed.toLocaleString();
         document.getElementById('statAnom').textContent  = totalAnomalies.toLocaleString();
+
+        // Update feature badge and dropdown pts live (single mode only)
+        if (currentMode === 'single') {
+          livePtsCount = totalPlayed;
+          liveAnomCount = totalAnomalies;
+
+          // Update badge
+          const badge = document.getElementById('featureAnomalyBadge');
+          badge.textContent = `${totalAnomalies} anomal${totalAnomalies === 1 ? 'y' : 'ies'}`;
+          badge.style.borderColor = totalAnomalies > 0 ? '#ef4444' : '#333';
+          badge.style.color       = totalAnomalies > 0 ? '#ef4444' : '#aaa';
+
+          // Update dropdown option pts count for the active feature
+          const sel = document.getElementById('featureSelect');
+          const selOpt = sel.options[sel.selectedIndex];
+          if (selOpt) {
+            selOpt.textContent = totalAnomalies > 0
+              ? `${currentFeature}  ⚠ ${totalAnomalies} anomaly  (${totalPlayed} pts)`
+              : `${currentFeature}  (${totalPlayed} pts)`;
+          }
+        }
       };
 
       liveWs.onclose = () => {

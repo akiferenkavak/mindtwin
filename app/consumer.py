@@ -206,6 +206,7 @@ except Exception as e:
 # TORQUE MODEL MANAGER (PCA + IForest)
 # ---------------------------
 torque_models = None
+_rf_reload_attempted = False
 if TorqueModelManager is not None:
     try:
         torque_models = TorqueModelManager.load(artifacts_dir=str(BASE_DIR / "artifacts"))
@@ -213,7 +214,8 @@ if TorqueModelManager is not None:
             print(
                 "[torque] model manager loaded:"
                 f" PCA={'yes' if torque_models.pca else 'no'},"
-                f" IForest={'yes' if torque_models.iforest else 'no'}"
+                f" IForest={'yes' if torque_models.iforest else 'no'},"
+                f" RF={'yes' if getattr(torque_models, 'graybox_rf', None) else 'no'}"
             )
         else:
             print("[torque] model manager: artifacts not found, skipping")
@@ -381,7 +383,10 @@ def log_torque_model_event(
     extra_meta: dict = None,
     severity: str = None
 ) -> None:
-    key = (event_type,)
+    key_joint = None
+    if extra_meta and "worst_joint" in extra_meta:
+        key_joint = extra_meta.get("worst_joint")
+    key = (event_type, key_joint)
     now = time.time()
     if key in last_error_time and now - last_error_time[key] <= MODEL_EVENT_COOLDOWN:
         return
@@ -406,7 +411,12 @@ def log_torque_model_event(
     elif event_type == "TORQUE_PCA":
         msg = f"PCA Torque Error: A{worst}"
     elif event_type == "TORQUE_COMBINED":
-        msg = f"DOUBLE ANOMALY (PCA + AE): A{worst}"
+        models = meta.get("models") or ["PCA", "AE"]
+        msg = f"DOUBLE ANOMALY ({' + '.join(models)}): A{worst}"
+    elif event_type == "TORQUE_TRIPLE_COMBINED":
+        msg = f"TRIPLE ANOMALY (PCA + AE + RF): A{worst}"
+    elif event_type == "TORQUE_RF":
+        msg = f"Random Forest Torque Residual: A{worst}"
     else:
         msg = f"{label} anomaly score exceeded threshold"
         if "worst_joint" in meta:
@@ -429,6 +439,8 @@ def log_torque_model_event(
 
 def run_torque_server() -> None:
     global latest_torque
+    global torque_models
+    global _rf_reload_attempted
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -482,7 +494,26 @@ def run_torque_server() -> None:
                     model_payload = {}
                     if torque_models is not None and torque_models.enabled():
                         try:
-                            model_payload = torque_models.score(pkt["torque_actual"])
+                            if (
+                                not _rf_reload_attempted
+                                and pkt.get("q") is not None
+                                and pkt.get("q_dot") is not None
+                                and getattr(torque_models, "graybox_rf", None) is None
+                            ):
+                                _rf_reload_attempted = True
+                                try:
+                                    torque_models = TorqueModelManager.load(artifacts_dir=str(BASE_DIR / "artifacts"))
+                                    print("[torque] model manager reloaded (RF auto-train may have run).")
+                                except Exception as _e:
+                                    print("[torque] model manager reload error:", _e)
+
+                            model_payload = torque_models.score(
+                                pkt["torque_actual"],
+                                q=pkt.get("q"),
+                                q_dot=pkt.get("q_dot"),
+                                q_ddot=pkt.get("q_ddot"),
+                                curr=pkt.get("curr"),
+                            )
                             pkt.update(model_payload)
                         except Exception as e:
                             print("[torque] model scoring error:", e)
@@ -498,6 +529,28 @@ def run_torque_server() -> None:
                             pkt["timestamp"],
                             extra_meta={"worst_joint": worst_j} if worst_j else None,
                         )
+
+                    rf_anomaly_joints = list(model_payload.get("rf_anomaly_joints") or [])
+                    if rf_anomaly_joints:
+                        rf_scores = model_payload.get("rf_scores") or {}
+                        rf_thresholds = model_payload.get("rf_thresholds") or {}
+
+                        # Emit per-axis events so the torque monitor can reflect RF anomalies per joint.
+                        for joint in rf_anomaly_joints:
+                            score_j = float(rf_scores.get(f"A{joint}", 0.0) or 0.0)
+                            thr_j = float(rf_thresholds.get(f"A{joint}", 0.0) or 0.0)
+                            log_torque_model_event(
+                                "TORQUE_RF",
+                                score_j,
+                                thr_j,
+                                pkt["frame_no"],
+                                pkt["timestamp"],
+                                extra_meta={
+                                    "worst_joint": int(joint),
+                                    "anomaly_joints": rf_anomaly_joints,
+                                    "rf_scores": rf_scores,
+                                },
+                            )
 
 
 
@@ -558,19 +611,46 @@ def run_torque_server() -> None:
                             severity=severity
                         )
 
-                    # COMBINED (PCA + AE — her ikisi de model anomali)
-                    if ae_is_anomaly and model_payload.get("pca_anomaly"):
+                    # COMBINED (any 2-of-3) and TRIPLE (3-of-3) model anomalies
+                    pca_anom = bool(model_payload.get("pca_anomaly"))
+                    rf_anom = bool(model_payload.get("rf_anomaly"))
+                    ae_anom = bool(ae_is_anomaly)
+                    models_hit = [m for m, ok in (("PCA", pca_anom), ("AE", ae_anom), ("RF", rf_anom)) if ok]
+                    worst_joint_combined = (
+                        int(pkt["diffs"].index(max(pkt["diffs"]))) + 1
+                        if pkt.get("diffs")
+                        else (model_payload.get("rf_worst_joint") or worst_single_ae_joint or 1)
+                    )
+
+                    if len(models_hit) >= 3:
                         log_torque_model_event(
-                            "TORQUE_COMBINED",
-                            max(ae_score, model_payload["pca_score"]),
+                            "TORQUE_TRIPLE_COMBINED",
+                            max(ae_score, float(model_payload.get("pca_score") or 0.0), float(model_payload.get("rf_max_residual") or 0.0)),
                             0,
                             pkt["frame_no"],
                             pkt["timestamp"],
                             extra_meta={
-                                "pca_score": model_payload["pca_score"],
+                                "models": models_hit,
+                                "pca_score": model_payload.get("pca_score"),
                                 "ae_score": ae_score,
-                                "worst_joint": worst_joint
-                            }
+                                "rf_max_residual": model_payload.get("rf_max_residual"),
+                                "worst_joint": worst_joint_combined,
+                            },
+                        )
+                    elif len(models_hit) == 2:
+                        log_torque_model_event(
+                            "TORQUE_COMBINED",
+                            max(ae_score, float(model_payload.get("pca_score") or 0.0), float(model_payload.get("rf_max_residual") or 0.0)),
+                            0,
+                            pkt["frame_no"],
+                            pkt["timestamp"],
+                            extra_meta={
+                                "models": models_hit,
+                                "pca_score": model_payload.get("pca_score"),
+                                "ae_score": ae_score,
+                                "rf_max_residual": model_payload.get("rf_max_residual"),
+                                "worst_joint": worst_joint_combined,
+                            },
                         )
 
 
@@ -667,6 +747,11 @@ def pca_page():
     return FileResponse(str(BASE_DIR / "static" / "pca.html"))
 
 
+@app.get("/rf")
+def rf_page():
+    return FileResponse(str(BASE_DIR / "static" / "rf.html"))
+
+
 @app.get("/api/autoencoder/results")
 def autoencoder_results():
     """Serve the pre-computed autoencoder anomaly results JSON."""
@@ -718,6 +803,26 @@ def pca_results():
             "overall": [],
             "per_feature": {}
         })
+
+
+@app.get("/api/rf/meta")
+def rf_meta():
+    """Serve graybox RF thresholds and model metadata."""
+    meta_path = BASE_DIR / "artifacts" / "graybox_rf_thresholds.json"
+    if meta_path.exists():
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return JSONResponse(
+                content=data,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
+            )
+        except Exception as e:
+            return JSONResponse(content={"error": str(e)}, status_code=500)
+    return JSONResponse(
+        content={"error": "graybox_rf_thresholds.json not found — run train_graybox_rf.py first"},
+        status_code=404,
+    )
 
 
 # ---------------------------

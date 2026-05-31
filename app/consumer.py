@@ -383,7 +383,10 @@ def log_torque_model_event(
     extra_meta: dict = None,
     severity: str = None
 ) -> None:
-    key = (event_type,)
+    key_joint = None
+    if extra_meta and "worst_joint" in extra_meta:
+        key_joint = extra_meta.get("worst_joint")
+    key = (event_type, key_joint)
     now = time.time()
     if key in last_error_time and now - last_error_time[key] <= MODEL_EVENT_COOLDOWN:
         return
@@ -408,7 +411,12 @@ def log_torque_model_event(
     elif event_type == "TORQUE_PCA":
         msg = f"PCA Torque Error: A{worst}"
     elif event_type == "TORQUE_COMBINED":
-        msg = f"DOUBLE ANOMALY (PCA + AE): A{worst}"
+        models = meta.get("models") or ["PCA", "AE"]
+        msg = f"DOUBLE ANOMALY ({' + '.join(models)}): A{worst}"
+    elif event_type == "TORQUE_TRIPLE_COMBINED":
+        msg = f"TRIPLE ANOMALY (PCA + AE + RF): A{worst}"
+    elif event_type == "TORQUE_RF":
+        msg = f"Random Forest Torque Residual: A{worst}"
     else:
         msg = f"{label} anomaly score exceeded threshold"
         if "worst_joint" in meta:
@@ -522,6 +530,28 @@ def run_torque_server() -> None:
                             extra_meta={"worst_joint": worst_j} if worst_j else None,
                         )
 
+                    rf_anomaly_joints = list(model_payload.get("rf_anomaly_joints") or [])
+                    if rf_anomaly_joints:
+                        rf_scores = model_payload.get("rf_scores") or {}
+                        rf_thresholds = model_payload.get("rf_thresholds") or {}
+
+                        # Emit per-axis events so the torque monitor can reflect RF anomalies per joint.
+                        for joint in rf_anomaly_joints:
+                            score_j = float(rf_scores.get(f"A{joint}", 0.0) or 0.0)
+                            thr_j = float(rf_thresholds.get(f"A{joint}", 0.0) or 0.0)
+                            log_torque_model_event(
+                                "TORQUE_RF",
+                                score_j,
+                                thr_j,
+                                pkt["frame_no"],
+                                pkt["timestamp"],
+                                extra_meta={
+                                    "worst_joint": int(joint),
+                                    "anomaly_joints": rf_anomaly_joints,
+                                    "rf_scores": rf_scores,
+                                },
+                            )
+
 
 
                     # -----------------------------------------------
@@ -581,19 +611,46 @@ def run_torque_server() -> None:
                             severity=severity
                         )
 
-                    # COMBINED (PCA + AE — her ikisi de model anomali)
-                    if ae_is_anomaly and model_payload.get("pca_anomaly"):
+                    # COMBINED (any 2-of-3) and TRIPLE (3-of-3) model anomalies
+                    pca_anom = bool(model_payload.get("pca_anomaly"))
+                    rf_anom = bool(model_payload.get("rf_anomaly"))
+                    ae_anom = bool(ae_is_anomaly)
+                    models_hit = [m for m, ok in (("PCA", pca_anom), ("AE", ae_anom), ("RF", rf_anom)) if ok]
+                    worst_joint_combined = (
+                        int(pkt["diffs"].index(max(pkt["diffs"]))) + 1
+                        if pkt.get("diffs")
+                        else (model_payload.get("rf_worst_joint") or worst_single_ae_joint or 1)
+                    )
+
+                    if len(models_hit) >= 3:
                         log_torque_model_event(
-                            "TORQUE_COMBINED",
-                            max(ae_score, model_payload["pca_score"]),
+                            "TORQUE_TRIPLE_COMBINED",
+                            max(ae_score, float(model_payload.get("pca_score") or 0.0), float(model_payload.get("rf_max_residual") or 0.0)),
                             0,
                             pkt["frame_no"],
                             pkt["timestamp"],
                             extra_meta={
-                                "pca_score": model_payload["pca_score"],
+                                "models": models_hit,
+                                "pca_score": model_payload.get("pca_score"),
                                 "ae_score": ae_score,
-                                "worst_joint": worst_joint
-                            }
+                                "rf_max_residual": model_payload.get("rf_max_residual"),
+                                "worst_joint": worst_joint_combined,
+                            },
+                        )
+                    elif len(models_hit) == 2:
+                        log_torque_model_event(
+                            "TORQUE_COMBINED",
+                            max(ae_score, float(model_payload.get("pca_score") or 0.0), float(model_payload.get("rf_max_residual") or 0.0)),
+                            0,
+                            pkt["frame_no"],
+                            pkt["timestamp"],
+                            extra_meta={
+                                "models": models_hit,
+                                "pca_score": model_payload.get("pca_score"),
+                                "ae_score": ae_score,
+                                "rf_max_residual": model_payload.get("rf_max_residual"),
+                                "worst_joint": worst_joint_combined,
+                            },
                         )
 
 

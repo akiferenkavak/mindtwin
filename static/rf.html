@@ -513,51 +513,8 @@
     </div>
   </div>
 
-  <!-- ── Model info cards ──────────────────────────────────── -->
-  <div class="info-row">
-
-    <div class="info-card">
-      <div class="ic-title">Model Parameters</div>
-      <div class="ic-row"><span class="ic-key">Estimators</span><span class="ic-val" id="ic-estimators">–</span></div>
-      <div class="ic-row"><span class="ic-key">Sigma Mult</span><span class="ic-val" id="ic-sigma">–</span></div>
-      <div class="ic-row"><span class="ic-key">Feature Dim</span><span class="ic-val" id="ic-dim">–</span></div>
-      <div class="ic-row"><span class="ic-key">dt median (s)</span><span class="ic-val" id="ic-dt">–</span></div>
-      <div class="ic-row"><span class="ic-key">Producer Scale</span><span class="ic-val" id="ic-scale">–</span></div>
-    </div>
-
-    <div class="info-card">
-      <div class="ic-title">Thresholds per Axis (3σ val)</div>
-      <div class="thr-bar-wrap" id="thrBarsContainer"></div>
-      <div style="margin-top:0.75rem;">
-        <div class="ic-row"><span class="ic-key">Train Samples</span><span class="ic-val" id="ic-samples2">–</span></div>
-        <div class="ic-row"><span class="ic-key">Axes</span><span class="ic-val" id="axesLabel">–</span></div>
-      </div>
-    </div>
-
-    <div class="info-card">
-      <div class="ic-title">Feature Vector (<span id="ic-feat-dim">–</span>-dim)</div>
-      <div style="display:flex;flex-wrap:wrap;gap:0.3rem;margin-top:0.35rem;" id="featureChips"></div>
-      <div style="margin-top:0.75rem;">
-        <div class="ic-row"><span class="ic-key">q</span><span class="ic-val">joint angles [rad]</span></div>
-        <div class="ic-row"><span class="ic-key">q̇</span><span class="ic-val">velocities [rad/s]</span></div>
-        <div class="ic-row"><span class="ic-key">τ_model</span><span class="ic-val">inv. dynamics [Nm]</span></div>
-        <div class="ic-row"><span class="ic-key">Filter</span><span class="ic-val">Savitzky-Golay</span></div>
-      </div>
-    </div>
-
-    <div class="info-card">
-      <div class="ic-title">Live Status</div>
-      <div id="liveResidualsContainer"></div>
-      <div style="margin-top:0.6rem;">
-        <div class="ic-row"><span class="ic-key">RF Anomaly</span><span class="ic-val" id="liveAnomaly">–</span></div>
-        <div class="ic-row"><span class="ic-key">Worst Joint</span><span class="ic-val" id="liveWorst">–</span></div>
-      </div>
-    </div>
-
-  </div>
-
-  <!-- ── Chart card ────────────────────────────────────────── -->
-  <div class="chart-card">
+	  <!-- ── Chart card ────────────────────────────────────────── -->
+	  <div class="chart-card">
     <div class="chart-card-header">
       <h3 id="chartTitle">Live Residual Monitor</h3>
       <div style="display:flex;align-items:center;gap:0.75rem;">
@@ -745,40 +702,11 @@
         const thrs = meta.thresholds || [];
         const axes = meta.torque_axes || ['A1','A2','A3'];
         metaAxes   = axes;
-        axes.forEach((ax, i) => {
-          if (thrs[i] != null) metaThresholds[ax] = thrs[i];
-        });
-
-        // ── Model params card ──
-        document.getElementById('ic-estimators').textContent = meta.n_estimators ?? '–';
-        document.getElementById('ic-sigma').textContent      = meta.sigma_mult != null ? `${meta.sigma_mult}σ (val)` : '–';
-        document.getElementById('ic-dim').textContent        = meta.feature_dim ?? '–';
-        const featDimEl = document.getElementById('ic-feat-dim');
-        if (featDimEl) featDimEl.textContent = meta.feature_dim ?? '–';
-        document.getElementById('ic-dt').textContent    = meta.dt_median != null ? meta.dt_median.toFixed(3) : '–';
-        document.getElementById('ic-scale').textContent = meta.producer_scale != null ? meta.producer_scale.toFixed(1) : '–';
-        document.getElementById('statSamples').textContent  = meta.training_samples ?? '–';
-        document.getElementById('ic-samples2').textContent  = meta.training_samples ?? '–';
-
-        // ── Threshold bars (dynamic) ──
-        const maxThr = Math.max(...thrs.filter(v => v != null), 0.001);
-        document.getElementById('thrBarsContainer').innerHTML = axes.map((ax, i) => {
-          const v = thrs[i];
-          const w = v != null ? (v / maxThr * 100).toFixed(1) : '5';
-          return `
-            <div class="thr-bar-row">
-              <span class="thr-bar-label">${ax}</span>
-              <div class="thr-bar-track"><div class="thr-bar-fill" id="thrBar${ax}" style="width:${w}%"></div></div>
-              <span class="thr-bar-val" id="thrVal${ax}">${v != null ? v.toFixed(4) : '–'}</span>
-            </div>`;
-        }).join('');
-
-        document.getElementById('axesLabel').textContent = axes.join(' · ');
-
-        // ── Live residual rows (dynamic) ──
-        document.getElementById('liveResidualsContainer').innerHTML = axes.map(ax =>
-          `<div class="ic-row"><span class="ic-key">${ax} Residual</span><span class="ic-val" id="live${ax}">–</span></div>`
-        ).join('');
+	    axes.forEach((ax, i) => {
+	      if (thrs[i] != null) metaThresholds[ax] = thrs[i];
+	    });
+	
+		    document.getElementById('statSamples').textContent  = meta.training_samples ?? '–';
 
         // ── Axis chips (dynamic) ──
         document.getElementById('axisChipsContainer').innerHTML = axes.map(ax =>
@@ -804,26 +732,6 @@
           <th>Anomaly Joints</th>
           <th>Severity</th>`;
 
-        // ── Feature chips ──
-        const chips = document.getElementById('featureChips');
-        const featList = (meta.features_per_axis && meta.features_per_axis[axes[0]])
-                         || meta.features || [];
-        featList.forEach(f => {
-          const s = document.createElement('span');
-          s.textContent = f;
-          const isTau = f.startsWith('tau_model');
-          s.style.cssText = isTau
-            ? 'background:rgba(16,185,129,0.12);border:1px solid #065f46;border-radius:4px;padding:0.1rem 0.4rem;font-size:0.73rem;color:#6ee7b7;'
-            : 'background:rgba(77,166,255,0.12);border:1px solid rgba(77,166,255,0.35);border-radius:4px;padding:0.1rem 0.4rem;font-size:0.73rem;color:#93c5fd;';
-          chips.appendChild(s);
-        });
-
-        // ── q_dot source badge ──
-        if (meta.vel_axis_act_used) {
-          const filterRow = [...document.querySelectorAll('.ic-key')]
-            .find(el => el.textContent === 'Filter');
-          if (filterRow) filterRow.nextElementSibling.textContent = 'VEL_AXIS_ACT + SG';
-        }
       })
       .catch(() => {});
 
@@ -891,29 +799,6 @@
         </tr>`).join('');
     }
 
-    // ── Live info card ────────────────────────────────────────
-    function updateLiveCard(scores, pkt) {
-      metaAxes.forEach(ax => {
-        const v  = scores[ax];
-        const el = document.getElementById(`live${ax}`);
-        if (!el) return;
-        const thr = metaThresholds[ax];
-        if (v == null) { el.textContent = '–'; el.className = 'ic-val'; return; }
-        el.textContent = v.toFixed(5);
-        if (thr && v > thr)           el.className = 'ic-val red';
-        else if (thr && v > thr*0.75) el.className = 'ic-val orange';
-        else                          el.className = 'ic-val ok';
-      });
-
-      const anomEl = document.getElementById('liveAnomaly');
-      anomEl.textContent = pkt.rf_anomaly ? 'YES' : 'No';
-      anomEl.className   = pkt.rf_anomaly ? 'ic-val red' : 'ic-val ok';
-
-      const wEl = document.getElementById('liveWorst');
-      wEl.textContent = pkt.rf_worst_joint ? `A${pkt.rf_worst_joint}` : '–';
-      wEl.className   = pkt.rf_anomaly ? 'ic-val red' : 'ic-val';
-    }
-
     // ── Axis chip animation ───────────────────────────────────
     function flashChip(ax) {
       const chip = document.getElementById(`chip${ax}`);
@@ -961,25 +846,25 @@
         const thresholds = pkt.rf_thresholds || null;
         const hasRfData  = Object.keys(scores).length > 0;
 
-        if (!dataReceived && hasRfData) {
-          dataReceived = true;
-          document.getElementById('noDataOverlay').style.display = 'none';
-          if (thresholds) {
-            metaAxes.forEach(ax => {
-              if (metaThresholds[ax] == null && thresholds[ax] != null)
-                metaThresholds[ax] = thresholds[ax];
-            });
+	        if (!dataReceived && hasRfData) {
+	          dataReceived = true;
+	          document.getElementById('noDataOverlay').style.display = 'none';
+	          renderTable();
+	          if (thresholds) {
+	            metaAxes.forEach(ax => {
+	              if (metaThresholds[ax] == null && thresholds[ax] != null)
+	                metaThresholds[ax] = thresholds[ax];
+	            });
           }
         }
 
         if (!hasRfData) return;
 
-        frameCount++;
-        document.getElementById('statFrames').textContent = frameCount;
-
-        pushToChart(pkt.frame_no, scores, thresholds || metaThresholds);
-        updateLiveCard(scores, pkt);
-        metaAxes.forEach(ax => setChipActive(ax, true));
+	        frameCount++;
+	        document.getElementById('statFrames').textContent = frameCount;
+	
+	        pushToChart(pkt.frame_no, scores, thresholds || metaThresholds);
+	        metaAxes.forEach(ax => setChipActive(ax, true));
 
         if (pkt.rf_anomaly) {
           anomalyCount++;

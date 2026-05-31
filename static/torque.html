@@ -535,15 +535,16 @@
     <div class="chart-top">
       <div>
         <h2>Live Torque Anomaly Level Monitor</h2>
-        <p>0 = normal baseline, 1 = PCA or Autoencoder anomaly, 2 = combined anomaly.</p>
+        <p>0 = normal baseline, 1 = PCA/AE/RF anomaly, 2 = 2-model combined, 3 = PCA+AE+RF combined.</p>
       </div>
 
-      <div class="legend-note">
-        <span>Normal: slightly above 0</span>
-        <span>Single: 1</span>
-        <span>Combined: 2</span>
+        <div class="legend-note">
+          <span>Normal: slightly above 0</span>
+          <span>Single: 1</span>
+          <span>Combined: 2</span>
+          <span>Triple: 3</span>
+        </div>
       </div>
-    </div>
 
     <div class="chart-shell">
       <canvas id="chart"></canvas>
@@ -796,7 +797,7 @@
           },
           y: {
             min: 0,
-            max: 2.15,
+            max: 3.15,
             title: {
               display: true,
               text: 'Anomaly Level',
@@ -807,8 +808,9 @@
               stepSize: 1,
               callback: function (value) {
                 if (value === 0) return '0 Normal';
-                if (value === 1) return '1 PCA / AE';
+                if (value === 1) return '1 PCA/AE/RF';
                 if (value === 2) return '2 Combined';
+                if (value === 3) return '3 Combined';
                 return value;
               }
             },
@@ -831,12 +833,16 @@
               label: function (context) {
                 const y = context.parsed.y;
 
+                if (y >= 2.95) {
+                  return `${context.dataset.label}: 3-model combined anomaly`;
+                }
+
                 if (y >= 1.95) {
                   return `${context.dataset.label}: Combined anomaly`;
                 }
 
                 if (y >= 0.95) {
-                  return `${context.dataset.label}: PCA / Autoencoder anomaly`;
+                  return `${context.dataset.label}: PCA / AE / RF anomaly`;
                 }
 
                 return `${context.dataset.label}: Normal`;
@@ -943,6 +949,15 @@
       const text = `${e.type || ''} ${e.message || ''} ${JSON.stringify(e.meta || {})}`.toUpperCase();
 
       if (
+        text.includes('TRIPLE_COMBINED') ||
+        text.includes('TRIPLE COMBINED') ||
+        text.includes('PCA + AE + RF') ||
+        text.includes('TRIPLE ANOMALY')
+      ) {
+        return 3;
+      }
+
+      if (
         text.includes('COMBINED') ||
         text.includes('TRIPLE_THREAT') ||
         text.includes('TRIPLE THREAT') ||
@@ -958,7 +973,9 @@
         text.includes('TORQUE_AUTOENCODER') ||
         text.includes('AUTOENCODER TORQUE') ||
         text.includes('AUTOENCODER') ||
-        text.includes('AE')
+        text.includes('AE') ||
+        text.includes('TORQUE_RF') ||
+        text.includes('RANDOM FOREST')
       ) {
         return 1;
       }
@@ -1025,7 +1042,10 @@
       pushFrame(frameNo, valuesByFeature);
 
       const axis = feature.replace('TORQUE_', '');
-      const label = level === 2 ? 'Combined anomaly' : 'PCA / Autoencoder anomaly';
+      const label =
+        level === 3 ? 'Triple combined anomaly'
+        : level === 2 ? 'Combined anomaly'
+        : 'PCA / AE / RF anomaly';
 
       frameText.textContent = `Frame ${frameNo}`;
       sourceText.textContent = 'Events /errors';
@@ -1078,7 +1098,7 @@
 
         // Recompute counts from the whole /errors list (dedup by secondKey+feature)
         // so page refresh / live toggle doesn't double-count.
-        const bestByKey = new Map(); // secondKey|feature -> level (1 or 2)
+        const bestByKey = new Map(); // secondKey|feature -> best level (1/2/3)
         for (const e of torqueEvents) {
           const feature = getFeatureFromErrorEvent(e);
           if (!feature || !TORQUE_FEATURES.includes(feature)) continue;
@@ -1096,7 +1116,7 @@
         for (const [key, level] of bestByKey.entries()) {
           const feat = key.split('|')[1];
           if (!feat || !newCounts.hasOwnProperty(feat)) continue;
-          newCounts[feat] += (level === 2 ? 2 : 1);
+          newCounts[feat] += (level === 3 ? 3 : level === 2 ? 2 : 1);
         }
 
 	        TORQUE_FEATURES.forEach(f => { axisCountsLive[f] = newCounts[f]; });

@@ -148,7 +148,7 @@ class GrayboxRFDetector:
                 max_res = residual
                 worst_j = ax
 
-        payload["rf_anomaly"]        = len(anomaly_joints) >= 2
+        payload["rf_anomaly"]        = len(anomaly_joints) > 0
         payload["rf_worst_joint"]    = worst_j
         payload["rf_max_residual"]   = round(max_res, 4)
         payload["rf_anomaly_joints"] = anomaly_joints

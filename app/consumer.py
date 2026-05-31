@@ -206,6 +206,7 @@ except Exception as e:
 # TORQUE MODEL MANAGER (PCA + IForest)
 # ---------------------------
 torque_models = None
+_rf_reload_attempted = False
 if TorqueModelManager is not None:
     try:
         torque_models = TorqueModelManager.load(artifacts_dir=str(BASE_DIR / "artifacts"))
@@ -213,7 +214,8 @@ if TorqueModelManager is not None:
             print(
                 "[torque] model manager loaded:"
                 f" PCA={'yes' if torque_models.pca else 'no'},"
-                f" IForest={'yes' if torque_models.iforest else 'no'}"
+                f" IForest={'yes' if torque_models.iforest else 'no'},"
+                f" RF={'yes' if getattr(torque_models, 'graybox_rf', None) else 'no'}"
             )
         else:
             print("[torque] model manager: artifacts not found, skipping")
@@ -429,6 +431,8 @@ def log_torque_model_event(
 
 def run_torque_server() -> None:
     global latest_torque
+    global torque_models
+    global _rf_reload_attempted
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -482,7 +486,26 @@ def run_torque_server() -> None:
                     model_payload = {}
                     if torque_models is not None and torque_models.enabled():
                         try:
-                            model_payload = torque_models.score(pkt["torque_actual"])
+                            if (
+                                not _rf_reload_attempted
+                                and pkt.get("q") is not None
+                                and pkt.get("q_dot") is not None
+                                and getattr(torque_models, "graybox_rf", None) is None
+                            ):
+                                _rf_reload_attempted = True
+                                try:
+                                    torque_models = TorqueModelManager.load(artifacts_dir=str(BASE_DIR / "artifacts"))
+                                    print("[torque] model manager reloaded (RF auto-train may have run).")
+                                except Exception as _e:
+                                    print("[torque] model manager reload error:", _e)
+
+                            model_payload = torque_models.score(
+                                pkt["torque_actual"],
+                                q=pkt.get("q"),
+                                q_dot=pkt.get("q_dot"),
+                                q_ddot=pkt.get("q_ddot"),
+                                curr=pkt.get("curr"),
+                            )
                             pkt.update(model_payload)
                         except Exception as e:
                             print("[torque] model scoring error:", e)
@@ -667,6 +690,11 @@ def pca_page():
     return FileResponse(str(BASE_DIR / "static" / "pca.html"))
 
 
+@app.get("/rf")
+def rf_page():
+    return FileResponse(str(BASE_DIR / "static" / "rf.html"))
+
+
 @app.get("/api/autoencoder/results")
 def autoencoder_results():
     """Serve the pre-computed autoencoder anomaly results JSON."""
@@ -718,6 +746,26 @@ def pca_results():
             "overall": [],
             "per_feature": {}
         })
+
+
+@app.get("/api/rf/meta")
+def rf_meta():
+    """Serve graybox RF thresholds and model metadata."""
+    meta_path = BASE_DIR / "artifacts" / "graybox_rf_thresholds.json"
+    if meta_path.exists():
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return JSONResponse(
+                content=data,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
+            )
+        except Exception as e:
+            return JSONResponse(content={"error": str(e)}, status_code=500)
+    return JSONResponse(
+        content={"error": "graybox_rf_thresholds.json not found — run train_graybox_rf.py first"},
+        status_code=404,
+    )
 
 
 # ---------------------------

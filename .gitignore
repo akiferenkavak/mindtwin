@@ -3,3 +3,4 @@ app/.env
 __pycache__/
 .venv/
 
+artifacts/graybox_rf_models.pkl

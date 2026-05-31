@@ -2,7 +2,7 @@
 
 **MindTwin** is an AI-powered digital twin platform designed for industrial robot monitoring, anomaly detection, and predictive maintenance.
 
-The platform combines real-time robot telemetry, thermal monitoring, MATLAB-based simulation, machine learning-based anomaly detection, automated event management, and an intelligent AI assistant called **KUKA AI**. By integrating multiple anomaly detection models within a unified monitoring environment, MindTwin enables users to detect, analyze, and interpret abnormal robot behavior more effectively.
+The platform combines real-time robot telemetry, thermal monitoring,  machine learning-based anomaly detection, automated event management, and an intelligent AI assistant called **KUKA AI**. By integrating multiple anomaly detection models within a unified monitoring environment, MindTwin enables users to detect, analyze, and interpret abnormal robot behavior more effectively.
 
 ---
 
@@ -38,7 +38,6 @@ This approach helps distinguish isolated detections from strongly supported anom
 * 🧠 PCA-based anomaly detection
 * 🤖 Autoencoder-based anomaly detection
 * 🌲 Random Forest-based torque behavior modeling
-* 🔬 MATLAB-based simulation support
 * 📈 Real vs simulated behavior comparison
 * 🚨 Automated anomaly event generation
 * 📋 Centralized event management system
@@ -66,12 +65,6 @@ This approach helps distinguish isolated detections from strongly supported anom
 * Autoencoder
 * Random Forest
 
-### Simulation Layer
-
-* MATLAB-based simulation environment
-* Simulated robot behavior generation
-* Real vs simulated data comparison
-* Digital twin validation support
 
 ### Event Management Layer
 
@@ -131,7 +124,7 @@ The assistant enables natural language interaction with the monitoring system an
 
 * Robot telemetry data
 * Thermal monitoring data
-* MATLAB simulation outputs
+* Torque monitoring data 
 
 ### Workflow
 
@@ -189,11 +182,6 @@ Provides natural language interaction, graph explanations, event summaries, and 
 
 * Autoencoder
 
-### Simulation
-
-* MATLAB
-* Digital Twin Models
-
 ### Frontend
 
 * HTML
@@ -222,15 +210,15 @@ Provides natural language interaction, graph explanations, event summaries, and 
 # 📷 Screenshots
 
 
-## MATLAB Simulation Environment
-
-
 
 ## Thermal Dashboard
 
-
+<img width="1407" height="816" alt="image" src="https://github.com/user-attachments/assets/1adc5558-bcb3-4e26-8ee2-43ffa6b3f60b" />
 
 ## Torque Dashboard
+
+<img width="542" height="479" alt="image" src="https://github.com/user-attachments/assets/f92e8250-44fb-486a-94dd-9e3bd5fdaed0" />
+
 
 
 ## Event Dashboard
@@ -241,6 +229,12 @@ Provides natural language interaction, graph explanations, event summaries, and 
 <img width="1458" height="758" alt="image" src="https://github.com/user-attachments/assets/48af36cc-f26e-47a0-9e78-a679cfd9475f" />
 
 <img width="1463" height="709" alt="image" src="https://github.com/user-attachments/assets/5db0c29f-5c77-4719-8f9e-d79c13fb4b59" />
+
+## Random Forest Anomaly Detection
+
+<img width="599" height="440" alt="image" src="https://github.com/user-attachments/assets/5141012c-fc8b-4839-8ac1-c12599b4a177" />
+
+
 
 
 
@@ -260,4 +254,4 @@ Provides natural language interaction, graph explanations, event summaries, and 
 
 # 📌 Project Status
 
-MindTwin successfully combines real-time monitoring, MATLAB-based simulation, PCA, Autoencoder, Random Forest, anomaly event management, model agreement analysis, and KUKA AI into a unified predictive maintenance platform for industrial robotic systems.
+MindTwin successfully combines real-time monitoring, PCA, Autoencoder, Random Forest, anomaly event management, model agreement analysis, and KUKA AI into a unified predictive maintenance platform for industrial robotic systems.

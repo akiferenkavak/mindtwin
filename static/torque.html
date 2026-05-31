@@ -169,6 +169,63 @@
     .chip.pca  { background: #1d4ed8; color: #fff; }
     .chip.ae   { background: #7c3aed; color: #fff; }
     .chip.comb { background: #be185d; color: #fff; }
+    .chip.rf   { background: #d97706; color: #fff; }
+
+    /* ── Graybox RF residual panel ────────────── */
+    .rf-panel {
+      background: #181818;
+      border: 1px solid #2d2d2d;
+      border-radius: 14px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .rf-panel-header {
+      display: flex; align-items: center; gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .rf-panel-header h2 {
+      margin: 0; font-size: 0.95rem; color: #9ca3af; font-weight: 600;
+    }
+    .rf-badge {
+      background: #d97706; color: #fff;
+      font-size: 0.7rem; font-weight: 700; padding: 0.15rem 0.55rem;
+      border-radius: 4px; letter-spacing: 0.05em;
+    }
+    .rf-status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #374151; margin-left: auto;
+      transition: background 0.3s;
+    }
+    .rf-status-dot.active { background: #d97706; box-shadow: 0 0 6px #d97706; }
+    .rf-status-dot.anomaly { background: #ef4444; box-shadow: 0 0 8px #ef4444;
+      animation: rfPulse 0.8s infinite; }
+    @keyframes rfPulse {
+      0%,100% { opacity:1; } 50% { opacity:0.4; }
+    }
+    .rf-bars { display: flex; flex-direction: column; gap: 0.6rem; }
+    .rf-bar-row {
+      display: flex; align-items: center; gap: 0.75rem;
+    }
+    .rf-axis {
+      font-size: 0.78rem; font-weight: 700; color: #6b7280;
+      width: 2rem; flex-shrink: 0;
+    }
+    .rf-track {
+      flex: 1; height: 10px; background: #2d2d2d;
+      border-radius: 6px; overflow: hidden; position: relative;
+    }
+    .rf-fill {
+      height: 100%; width: 0%; border-radius: 6px;
+      background: #22c55e;
+      transition: width 0.4s, background 0.4s;
+    }
+    .rf-fill.warn   { background: #eab308; }
+    .rf-fill.danger { background: #ef4444; }
+    .rf-val {
+      font-size: 0.78rem; font-family: monospace; color: #9ca3af;
+      width: 5.5rem; flex-shrink: 0; text-align: right;
+    }
+    .rf-val.anomaly { color: #ef4444; font-weight: 700; }
 
     /* ── Progress bar for replay ──────────────── */
     .replay-bar-wrap {
@@ -259,6 +316,7 @@
     <a href="/events">Events</a>
     <a href="/autoencoder">Autoencoder</a>
     <a href="/pca">PCA</a>
+    <a href="/rf">Random Forest</a>
   </nav>
 
   <div class="page-header">
@@ -307,6 +365,32 @@
     </div>
   </div>
 
+  <!-- Graybox RF residual panel -->
+  <div class="rf-panel">
+    <div class="rf-panel-header">
+      <span class="rf-badge">GRAYBOX RF</span>
+      <h2>Live Residual Monitor — A1 · A2 · A3</h2>
+      <div class="rf-status-dot" id="rfStatusDot"></div>
+    </div>
+    <div class="rf-bars">
+      <div class="rf-bar-row">
+        <span class="rf-axis">A1</span>
+        <div class="rf-track"><div class="rf-fill" id="rfFill-A1"></div></div>
+        <span class="rf-val" id="rfVal-A1">—</span>
+      </div>
+      <div class="rf-bar-row">
+        <span class="rf-axis">A2</span>
+        <div class="rf-track"><div class="rf-fill" id="rfFill-A2"></div></div>
+        <span class="rf-val" id="rfVal-A2">—</span>
+      </div>
+      <div class="rf-bar-row">
+        <span class="rf-axis">A3</span>
+        <div class="rf-track"><div class="rf-fill" id="rfFill-A3"></div></div>
+        <span class="rf-val" id="rfVal-A3">—</span>
+      </div>
+    </div>
+  </div>
+
   <!-- Live Chart (WebSocket) — bottom section, always visible -->
   <div class="chart-section">
     <h2>Live Torque Anomaly Level Monitor (WebSocket)</h2>
@@ -341,9 +425,9 @@
   let liveWs      = null;   // WebSocket for torque readings (bottom chart)
   let liveWsAnom  = null;   // WebSocket for live anomaly counting
 
-  // Per-feature counters: { pca, ae, combined }
+  // Per-feature counters: { pca, ae, combined, rf }
   const counts = {};
-  TORQUE_FEATURES.forEach(f => { counts[f] = { pca: 0, ae: 0, combined: 0 }; });
+  TORQUE_FEATURES.forEach(f => { counts[f] = { pca: 0, ae: 0, combined: 0, rf: 0 }; });
 
   // Loaded timeline for replay
   let replayEvents = [];   // sorted array of { secondKey, feature, method:'PCA'|'AE'|'Combined' }
@@ -371,11 +455,12 @@
           <div class="accent-bar" id="bar-${feat}" style="background:${col};"></div>
           <div class="axis-label">Axis ${ax}</div>
           <div class="big-count" id="count-${feat}" style="color:${col}">0</div>
-          <!-- Hidden breakdown elements to avoid JS errors -->
-          <div style="display:none;">
-            <span id="pca-${feat}">0</span>
-            <span id="ae-${feat}">0</span>
-            <span id="comb-${feat}">0</span>
+          <div class="count-lbl">anomalies</div>
+          <div class="breakdown">
+            <span class="chip pca"  id="pca-${feat}" style="display:none">PCA 0</span>
+            <span class="chip ae"   id="ae-${feat}"  style="display:none">AE 0</span>
+            <span class="chip rf"   id="rf-${feat}"  style="display:none">RF 0</span>
+            <span class="chip comb" id="comb-${feat}" style="display:none">⊕ 0</span>
           </div>
         </div>`;
     }).join('');
@@ -395,25 +480,30 @@
 
   function updateCard(feat, flash = '') {
     const c = counts[feat];
-    const total = c.pca + c.ae + c.combined;   // combined is extra on top
+    const total = c.pca + c.ae + c.rf + c.combined;
 
-    const el = document.getElementById(`count-${feat}`);
+    const el   = document.getElementById(`count-${feat}`);
     const card = document.getElementById(`card-${feat}`);
     if (!el || !card) return;
 
     el.textContent = total;
-    document.getElementById(`pca-${feat}`).textContent  = c.pca;
-    document.getElementById(`ae-${feat}`).textContent   = c.ae;
-    document.getElementById(`comb-${feat}`).textContent = c.combined;
 
-    // Color intensity based on count
+    // Show/update chips only when they have detections
+    const pcaEl  = document.getElementById(`pca-${feat}`);
+    const aeEl   = document.getElementById(`ae-${feat}`);
+    const rfEl   = document.getElementById(`rf-${feat}`);
+    const combEl = document.getElementById(`comb-${feat}`);
+
+    if (pcaEl)  { pcaEl.textContent  = `PCA ${c.pca}`;   pcaEl.style.display  = c.pca      ? '' : 'none'; }
+    if (aeEl)   { aeEl.textContent   = `AE ${c.ae}`;     aeEl.style.display   = c.ae       ? '' : 'none'; }
+    if (rfEl)   { rfEl.textContent   = `RF ${c.rf}`;     rfEl.style.display   = c.rf       ? '' : 'none'; }
+    if (combEl) { combEl.textContent = `⊕ ${c.combined}`; combEl.style.display = c.combined ? '' : 'none'; }
+
     const idx = TORQUE_FEATURES.indexOf(feat);
-    const baseCol = AXIS_COLORS[idx];
-    el.style.color = baseCol;
+    el.style.color = AXIS_COLORS[idx];
 
-    // Bump animation
     card.classList.remove('bumped', 'combined-flash');
-    void card.offsetWidth;  // reflow
+    void card.offsetWidth;
     if (flash === 'combined') {
       card.classList.add('combined-flash');
     } else if (flash) {
@@ -460,10 +550,45 @@
       counts[feat].combined++;
       updateCard(feat, 'combined');
     } else {
-      counts[feat][type]++;
+      if (counts[feat][type] !== undefined) counts[feat][type]++;
       updateCard(feat, type);
     }
     updateStatsBar();
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     GRAYBOX RF — live residual bars
+  ═══════════════════════════════════════════════════════════════ */
+  function updateRfBars(rfScores, rfThresholds, rfAnomalyJoints) {
+    const dot = document.getElementById('rfStatusDot');
+    let anyAnomaly = false;
+    let hasData = false;
+
+    [1, 2, 3].forEach(ax => {
+      const key   = `A${ax}`;
+      const score = rfScores   ? rfScores[key]     : undefined;
+      const thr   = rfThresholds ? rfThresholds[key] : undefined;
+      const fillEl = document.getElementById(`rfFill-A${ax}`);
+      const valEl  = document.getElementById(`rfVal-A${ax}`);
+      if (!fillEl || !valEl) return;
+
+      if (score === undefined || score === null || thr === undefined) return;
+      hasData = true;
+
+      const ratio = thr > 0 ? score / thr : 0;
+      const pct   = Math.min(ratio * 100, 100);
+      const isAnom = rfAnomalyJoints && rfAnomalyJoints.includes(ax);
+      if (isAnom) anyAnomaly = true;
+
+      fillEl.style.width = pct + '%';
+      fillEl.className = 'rf-fill' + (ratio >= 1 ? ' danger' : ratio >= 0.75 ? ' warn' : '');
+
+      valEl.textContent = `${score.toFixed(3)} / ${thr.toFixed(3)}`;
+      valEl.className   = 'rf-val' + (isAnom ? ' anomaly' : '');
+    });
+
+    if (!hasData) return;
+    dot.className = 'rf-status-dot' + (anyAnomaly ? ' anomaly' : ' active');
   }
 
   /* ═══════════════════════════════════════════════════════════════
@@ -761,16 +886,17 @@
           grid: { color: 'rgba(255,255,255,0.05)' }
         },
         y: {
-          title: { display: true, text: 'Anomaly Level (0: None, 1: Single, 2: Combined)', color: '#888' },
+          title: { display: true, text: 'Anomaly Level (models flagged simultaneously)', color: '#888' },
           min: 0,
-          max: 2,
+          max: 3,
           ticks: {
             color: '#666',
             stepSize: 1,
             callback: function(value) {
-              if (value === 0) return '0 (None)';
-              if (value === 1) return '1 (Single)';
-              if (value === 2) return '2 (Combined)';
+              if (value === 0) return '0 – Normal';
+              if (value === 1) return '1 – Single';
+              if (value === 2) return '2 – Double';
+              if (value === 3) return '3 – Triple';
               return value;
             }
           },
@@ -814,13 +940,15 @@
           }
         }
         
-        // Calculate anomaly value (0, 1, or 2)
-        let anomalyVal = 0;
-        if (pcaHasAnomaly && aeHasAnomaly) {
-          anomalyVal = 2;
-        } else if (pcaHasAnomaly || aeHasAnomaly) {
-          anomalyVal = 1;
+        // RF anomaly for this joint (A1-A3 only)
+        let rfHasAnomaly = false;
+        if (pkt.rf_anomaly && Array.isArray(pkt.rf_anomaly_joints)) {
+          rfHasAnomaly = pkt.rf_anomaly_joints.includes(i + 1);
         }
+
+        // 0 = none, 1 = single model, 2 = two models, 3 = all three
+        const modelCount = [pcaHasAnomaly, aeHasAnomaly, rfHasAnomaly].filter(Boolean).length;
+        const anomalyVal = modelCount;
 
         chartDatasets[i].data.push({ x: pkt.frame_no, y: anomalyVal });
         if (chartDatasets[i].data.length > SLIDE_WINDOW) chartDatasets[i].data.shift();
@@ -856,6 +984,22 @@
       if (pkt.ae_anomaly && pkt.ae_root_cause) {
         const feat = pkt.ae_root_cause;  // e.g. "TORQUE_A2"
         liveIncrement(feat, 'ae', second);
+      }
+
+      // RF anomaly — per axis (A1, A2, A3 only)
+      if (pkt.rf_anomaly && Array.isArray(pkt.rf_anomaly_joints)) {
+        pkt.rf_anomaly_joints.forEach(ax => {
+          const feat = `TORQUE_A${ax}`;
+          if (TORQUE_FEATURES.includes(feat)) {
+            counts[feat].rf++;
+            updateCard(feat, 'rf');
+          }
+        });
+      }
+
+      // RF residual bars — always update when data present
+      if (pkt.rf_scores || pkt.rf_thresholds) {
+        updateRfBars(pkt.rf_scores, pkt.rf_thresholds, pkt.rf_anomaly_joints);
       }
 
       // Update live frame counter

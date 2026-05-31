@@ -1,8 +1,7 @@
-import socket, json, time, csv
+import socket, json, time, csv, re, math
 from datetime import datetime
 from tkinter import Tk
 from tkinter.filedialog import askopenfilename
-import math
 
 HOST = "127.0.0.1"
 PORT = 8766
@@ -93,6 +92,111 @@ def quantile(sorted_vals, q):
     frac = pos - lo
     return sorted_vals[lo] * (1 - frac) + sorted_vals[hi] * frac
 
+def detect_axis_act_column(headers) -> str | None:
+    norm = {k.lower(): k for k in headers if isinstance(k, str)}
+    return norm.get("axis_act")
+
+
+def detect_vel_axis_act_cols(headers) -> list | None:
+    """VEL_AXIS_ACT_A1..A6 kolonlarını tespit et. Tümü yoksa None döndür."""
+    norm = {k.lower(): k for k in headers if isinstance(k, str)}
+    cols = []
+    for i in range(1, 7):
+        key = f"vel_axis_act_a{i}"
+        if key in norm:
+            cols.append(norm[key])
+        else:
+            return None
+    return cols
+
+
+def detect_curr_cols(headers) -> list | None:
+    """CURR_A1..A6 kolonlarını tespit et. Tümü yoksa None döndür."""
+    norm = {k.lower(): k for k in headers if isinstance(k, str)}
+    cols = []
+    for i in range(1, 7):
+        key = f"curr_a{i}"
+        if key in norm:
+            cols.append(norm[key])
+        else:
+            return None
+    return cols
+
+
+def parse_axis_act(raw: str) -> list[float] | None:
+    """Parse 'A1 45.23 A2 -12.34 ...' → 6 joint angles in radians. Returns None on failure."""
+    tokens = re.findall(r'A(\d)\s+([-\d.]+(?:[Ee][-+]?\d+)?)', raw)
+    q = [0.0] * 6
+    found = 0
+    for idx_str, val_str in tokens:
+        idx = int(idx_str) - 1
+        if 0 <= idx < 6:
+            import math as _m
+            q[idx] = float(val_str) * (_m.pi / 180.0)  # deg → rad
+            found += 1
+    return q if found > 0 else None
+
+
+def _parse_dt(rows) -> float:
+    """Timestamp'lardan medyan dt (saniye) hesapla. Başarısızsa 0.01 (100 Hz) döndür."""
+    from datetime import datetime
+    ts_list = []
+    for r in rows:
+        raw = r.get("timestamp") or r.get("Timestamp") or ""
+        try:
+            ts_list.append(datetime.fromisoformat(raw.replace(" ", "T")))
+        except Exception:
+            break
+    if len(ts_list) == len(rows) and len(ts_list) > 1:
+        import numpy as _np
+        diffs = [(ts_list[i+1] - ts_list[i]).total_seconds() for i in range(len(ts_list)-1)]
+        dt = float(_np.median(diffs))
+        return dt if dt > 0 else 0.01
+    return 0.01  # 100 Hz fallback
+
+
+def precompute_kinematics(rows, axis_act_col: str, vel_cols=None):
+    """
+    q (rad), q_dot (rad/s) ve q_ddot (rad/s²) ön-hesaplar.
+
+    vel_cols verilirse: VEL_AXIS_ACT (deg/s → rad/s) kullanılır, tek türev yeterli.
+    verilmezse: AXIS_ACT'tan SG + double-gradient (eski yöntem, fallback).
+    """
+    try:
+        import numpy as np
+        from scipy.signal import savgol_filter
+    except ImportError:
+        print("[producer] scipy not installed — joint kinematics will not be sent")
+        return None, None, None
+
+    q_all = []
+    for r in rows:
+        raw = r.get(axis_act_col, "") or ""
+        parsed = parse_axis_act(raw)
+        q_all.append(parsed if parsed is not None else [0.0] * 6)
+
+    q_arr = np.array(q_all, dtype=float)  # (N, 6)
+    win = min(7, len(q_arr) if len(q_arr) % 2 == 1 else len(q_arr) - 1)
+    q_smooth = savgol_filter(q_arr, window_length=win, polyorder=2, axis=0) if win >= 3 else q_arr
+
+    dt = _parse_dt(rows)
+
+    if vel_cols is not None:
+        # Ölçülmüş hız: deg/s → rad/s, tek türev → ivme
+        vel_raw = np.array(
+            [[to_float(r.get(c)) or 0.0 for c in vel_cols] for r in rows],
+            dtype=float
+        ) * (3.141592653589793 / 180.0)
+        q_dot_arr  = savgol_filter(vel_raw, window_length=win, polyorder=2, axis=0) if win >= 3 else vel_raw
+        q_ddot_arr = np.gradient(q_dot_arr, dt, axis=0)
+    else:
+        # Fallback: pozisyondan çift türev
+        q_dot_arr  = np.gradient(q_smooth, dt, axis=0)
+        q_ddot_arr = np.gradient(q_dot_arr, dt, axis=0)
+
+    return q_arr.tolist(), q_dot_arr.tolist(), q_ddot_arr.tolist()
+
+
 def load_rows(csv_path):
     with open(csv_path, newline="", encoding="utf-8") as f:
         first_line = f.readline()
@@ -149,7 +253,7 @@ def main():
     CSV_PATH = pick_csv_from_user()
     rows = load_rows(CSV_PATH)
 
-    # 🔽 CSV header'a göre joint kolonlarını otomatik algıla
+    # CSV header'a göre joint kolonlarını otomatik algıla
     global JOINT_KEYS
     JOINT_KEYS = detect_joint_keys(rows[0].keys())
     JOINTS = len(JOINT_KEYS)
@@ -157,19 +261,44 @@ def main():
     print(f"[producer] Selected CSV: {CSV_PATH}")
     print(f"[producer] Using torque columns: {JOINT_KEYS}")
 
-    # 🔽 SCALE kalibrasyonu
+    # SCALE kalibrasyonu
     scale, p99 = calibrate_scale(rows)
     print(
         f"[producer] Calibrated SCALE={scale:.4f} "
         f"from p99(diff)={p99:.4f} to keep thr={TARGET_THR}"
     )
 
+    # Kinematik ön-hesaplama (graybox RF için — AXIS_ACT varsa)
+    axis_act_col = detect_axis_act_column(rows[0].keys())
+    q_list = None
+    q_dot_list = None
+    q_ddot_list = None
+    if axis_act_col:
+        vel_cols = detect_vel_axis_act_cols(rows[0].keys())
+        if vel_cols:
+            print(f"[producer] VEL_AXIS_ACT kolonları bulundu — ölçülmüş hız kullanılıyor (daha doğru q_ddot)")
+        else:
+            print(f"[producer] VEL_AXIS_ACT yok — AXIS_ACT'tan çift türev kullanılıyor")
+        print(f"[producer] AXIS_ACT kolonu: '{axis_act_col}' — kinematik hesaplanıyor ...")
+        q_list, q_dot_list, q_ddot_list = precompute_kinematics(rows, axis_act_col, vel_cols=vel_cols)
+        if q_list is not None:
+            print("[producer] q, q_dot ve q_ddot hazır — graybox RF (ters dinamik) aktif")
+        else:
+            print("[producer] q hesabı başarısız — graybox RF devre dışı")
+    else:
+        print("[producer] AXIS_ACT kolonu yok — graybox RF bu CSV için devre dışı")
+
+    curr_cols = detect_curr_cols(rows[0].keys())
+    if curr_cols:
+        print(f"[producer] CURR kolonları bulundu — motor akımı gönderilecek: {curr_cols}")
+    else:
+        print("[producer] CURR kolonları yok — motor akımı gönderilmeyecek")
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect((HOST, PORT))
 
     frame = 0
     idx = 0
-
     ideal = [0.0] * JOINTS
 
     while True:
@@ -187,8 +316,19 @@ def main():
             "frame_no": frame,
             "timestamp": ts,
             "torque_ideal": ideal,
-            "torque_actual": actual
+            "torque_actual": actual,
         }
+
+        # Eklem açıları, hızları ve ivmeleri — graybox RF (ters dinamik) için
+        if q_list is not None and q_dot_list is not None:
+            pkt["q"]      = q_list[idx]
+            pkt["q_dot"]  = q_dot_list[idx]
+            if q_ddot_list is not None:
+                pkt["q_ddot"] = q_ddot_list[idx]
+
+        # Motor akımları — CURR özelliği için
+        if curr_cols:
+            pkt["curr"] = [to_float(r.get(c)) or 0.0 for c in curr_cols]
 
         sock.sendall((json.dumps(pkt) + "\n").encode())
         print(f"sent frame {frame}")

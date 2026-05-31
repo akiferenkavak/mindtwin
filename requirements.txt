@@ -5,3 +5,5 @@ python-dotenv
 numpy
 scikit-learn
 joblib
+scipy
+# Newton-Euler ters dinamik: saf numpy ile uygulandı, ek kütüphane gerekmez

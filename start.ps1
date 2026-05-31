@@ -4,7 +4,7 @@
 #   NOT: Torque producer başladıktan sonra CSV seçim penceresi açılır.
 # ─────────────────────────────────────────────────────────────────
 
-$ROOT = "C:\Users\yusuf\OneDrive\Desktop\SDP Code\mindtwin"
+$ROOT = $PSScriptRoot
 Set-Location $ROOT
 
 # 1) Sanal ortam veya Sistem Python seçimi
@@ -23,14 +23,14 @@ Start-Sleep -Seconds 1
 
 # 3) Gerekli paketleri kur (sadece ilk kez veya güncellemede)
 Write-Host "[2/5] Paketler kontrol ediliyor..." -ForegroundColor Yellow
-& $PY -m pip install -q fastapi uvicorn google-generativeai python-dotenv numpy scikit-learn joblib
+& $PY -m pip install -q -r requirements.txt
 
 # 4) Backend (FastAPI consumer)
 Write-Host "[3/5] Backend baslatiliyor (port 8000)..." -ForegroundColor Cyan
 Start-Process powershell -ArgumentList "-NoExit","-Command",
     "Set-Location '$ROOT'; & '$PY' app\consumer.py"
 
-Start-Sleep -Seconds 2
+Start-Sleep -Seconds 6
 
 # 5) Thermal producer
 Write-Host "[4/5] Thermal producer baslatiliyor..." -ForegroundColor Cyan
@@ -44,16 +44,16 @@ Start-Process powershell -ArgumentList "-NoExit","-Command",
 
 Start-Sleep -Seconds 3
 
-# 7) Tarayıcı (Yeni gizli sekmede açarak cache'i sıfırlarız)
-Write-Host "Tarayici aciliyor (Gecici cache sorunlarini onlemek icin gizli modda acilmasi onerilir)..." -ForegroundColor Green
+# 7) Tarayıcı
+Write-Host "Tarayici aciliyor..." -ForegroundColor Green
 Start-Process "http://localhost:8000"
 
 Write-Host ""
-Write-Host "✅ Sistem calisiyor! Torque producer'da CSV dosyasini secin." -ForegroundColor Green
-Write-Host "   Ana sayfa   : http://localhost:8000"
-Write-Host "   Torque      : http://localhost:8000/torque"
-Write-Host "   Thermal     : http://localhost:8000/thermal"
-Write-Host "   Events      : http://localhost:8000/events"
-Write-Host "   Autoencoder : http://localhost:8000/autoencoder"
-Write-Host "   PCA & IForest: http://localhost:8000/pca"
-
+Write-Host "Sistem calisiyor! Torque producer'da CSV dosyasini secin." -ForegroundColor Green
+Write-Host "   Ana sayfa      : http://localhost:8000"
+Write-Host "   Torque         : http://localhost:8000/torque"
+Write-Host "   Thermal        : http://localhost:8000/thermal"
+Write-Host "   Events         : http://localhost:8000/events"
+Write-Host "   Autoencoder    : http://localhost:8000/autoencoder"
+Write-Host "   PCA & IForest  : http://localhost:8000/pca"
+Write-Host "   Random Forest  : http://localhost:8000/rf"

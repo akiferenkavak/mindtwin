@@ -212,7 +212,8 @@ if TorqueModelManager is not None:
             print(
                 "[torque] model manager loaded:"
                 f" PCA={'yes' if torque_models.pca else 'no'},"
-                f" IForest={'yes' if torque_models.iforest else 'no'}"
+                f" IForest={'yes' if torque_models.iforest else 'no'},"
+                f" GrayboxRF={'yes' if torque_models.graybox_rf else 'no'}"
             )
         else:
             print("[torque] model manager: artifacts not found, skipping")
@@ -406,6 +407,8 @@ def log_torque_model_event(
         msg = f"PCA Torque Hatası: A{worst}"
     elif event_type == "TORQUE_IFOREST":
         msg = f"IForest Torque Hatası: A{worst}"
+    elif event_type == "TORQUE_RF":
+        msg = f"GrayboxRF Torque Hatası: A{worst}"
     else:
         msg = f"{label} anomaly score exceeded threshold"
         if "worst_joint" in meta:
@@ -508,11 +511,17 @@ def run_torque_server() -> None:
 
                                     last_error_time[key] = now
 
-                    # PCA + IForest scores
+                    # PCA + IForest + GrayboxRF scores
                     model_payload = {}
                     if torque_models is not None and torque_models.enabled():
                         try:
-                            model_payload = torque_models.score(pkt["torque_actual"])
+                            model_payload = torque_models.score(
+                                pkt["torque_actual"],
+                                q=pkt.get("q"),
+                                q_dot=pkt.get("q_dot"),
+                                q_ddot=pkt.get("q_ddot"),
+                                curr=pkt.get("curr"),
+                            )
                             pkt.update(model_payload)
                         except Exception as e:
                             print("[torque] model scoring error:", e)
@@ -536,6 +545,23 @@ def run_torque_server() -> None:
                             model_payload["iforest_threshold"],
                             pkt["frame_no"],
                             pkt["timestamp"],
+                        )
+
+                    if model_payload.get("rf_anomaly"):
+                        worst_rf = model_payload.get("rf_worst_joint")
+                        max_res  = model_payload.get("rf_max_residual", 0.0)
+                        thr_rf   = model_payload.get("rf_thresholds", {}).get(f"A{worst_rf}", 1.0)
+                        log_torque_model_event(
+                            "TORQUE_RF",
+                            max_res,
+                            thr_rf,
+                            pkt["frame_no"],
+                            pkt["timestamp"],
+                            extra_meta={
+                                "worst_joint": worst_rf,
+                                "anomaly_joints": model_payload.get("rf_anomaly_joints", []),
+                                "rf_scores": model_payload.get("rf_scores", {}),
+                            },
                         )
 
                     # -----------------------------------------------
@@ -701,6 +727,11 @@ def pca_page():
     return FileResponse(str(BASE_DIR / "static" / "pca.html"))
 
 
+@app.get("/rf")
+def rf_page():
+    return FileResponse(str(BASE_DIR / "static" / "rf.html"))
+
+
 @app.get("/api/autoencoder/results")
 def autoencoder_results():
     """Serve the pre-computed autoencoder anomaly results JSON."""
@@ -724,6 +755,20 @@ def autoencoder_results():
             "multiple": [],
             "single": {}
         })
+
+
+@app.get("/api/rf/meta")
+def rf_meta():
+    """Serve graybox RF thresholds and model metadata."""
+    meta_path = BASE_DIR / "artifacts" / "graybox_rf_thresholds.json"
+    if meta_path.exists():
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return JSONResponse(content=data)
+        except Exception as e:
+            return JSONResponse(content={"error": str(e)}, status_code=500)
+    return JSONResponse(content={"error": "graybox_rf_thresholds.json not found — run train_graybox_rf.py first"}, status_code=404)
 
 
 @app.get("/api/pca/results")

@@ -469,6 +469,38 @@ def run_torque_server() -> None:
                         continue
 
                     pkt = json.loads(line.decode("utf-8"))
+                    # Normalize torque input per detector scale if raw torque + producer scale are provided.
+                    # This keeps PCA/IForest and RF aligned even if the producer calibrates with a different CSV.
+                    torque_raw = pkt.get("torque_actual_raw")
+                    producer_scale = pkt.get("producer_scale")
+                    if (
+                        torque_models is not None
+                        and torque_raw is not None
+                        and producer_scale
+                        and isinstance(torque_raw, list)
+                    ):
+                        try:
+                            scale_f = float(producer_scale) if float(producer_scale) != 0 else None
+                            if scale_f:
+                                pca_scale = None
+                                try:
+                                    pca_scale = float((torque_models.pca.meta or {}).get("producer_scale") or 0) if torque_models.pca else None
+                                except Exception:
+                                    pca_scale = None
+                                rf_scale = None
+                                try:
+                                    rf_scale = float(getattr(getattr(torque_models, "graybox_rf", None), "producer_scale", 0) or 0)
+                                except Exception:
+                                    rf_scale = None
+
+                                if pca_scale and pca_scale > 0:
+                                    pkt["torque_actual"] = [(float(v) / pca_scale) for v in torque_raw]
+                                # Always keep the producer-normalized values available for RF and other consumers.
+                                pkt["torque_actual_producer"] = [(float(v) / scale_f) for v in torque_raw]
+                                if rf_scale and rf_scale > 0:
+                                    pkt["torque_actual_rf"] = [(float(v) / rf_scale) for v in torque_raw]
+                        except Exception:
+                            pass
                     ideal = pkt.get("torque_ideal")
                     if torque_models is not None and torque_models.pca is not None:
                         try:
@@ -508,7 +540,7 @@ def run_torque_server() -> None:
                                     print("[torque] model manager reload error:", _e)
 
                             model_payload = torque_models.score(
-                                pkt["torque_actual"],
+                                pkt.get("torque_actual") or pkt["torque_actual"],
                                 q=pkt.get("q"),
                                 q_dot=pkt.get("q_dot"),
                                 q_ddot=pkt.get("q_ddot"),
@@ -530,10 +562,32 @@ def run_torque_server() -> None:
                             extra_meta={"worst_joint": worst_j} if worst_j else None,
                         )
 
-                    rf_anomaly_joints = list(model_payload.get("rf_anomaly_joints") or [])
+                    # RF scoring uses its own normalization scale; if provided, override with torque_actual_rf.
+                    rf_payload = model_payload
+                    if (
+                        torque_models is not None
+                        and getattr(torque_models, "graybox_rf", None) is not None
+                        and pkt.get("torque_actual_rf") is not None
+                        and pkt.get("q") is not None
+                        and pkt.get("q_dot") is not None
+                    ):
+                        try:
+                            rf_payload = torque_models.graybox_rf.score(
+                                pkt.get("q"),
+                                pkt.get("q_dot"),
+                                pkt.get("torque_actual_rf"),
+                                q_ddot=pkt.get("q_ddot"),
+                                curr=pkt.get("curr"),
+                            )
+                            # Keep rf_* keys consistent in pkt for downstream UI.
+                            pkt.update(rf_payload)
+                        except Exception as _e:
+                            rf_payload = model_payload
+
+                    rf_anomaly_joints = list(rf_payload.get("rf_anomaly_joints") or [])
                     if rf_anomaly_joints:
-                        rf_scores = model_payload.get("rf_scores") or {}
-                        rf_thresholds = model_payload.get("rf_thresholds") or {}
+                        rf_scores = rf_payload.get("rf_scores") or {}
+                        rf_thresholds = rf_payload.get("rf_thresholds") or {}
 
                         # Emit per-axis events so the torque monitor can reflect RF anomalies per joint.
                         for joint in rf_anomaly_joints:
@@ -636,6 +690,7 @@ def run_torque_server() -> None:
                                 "rf_max_residual": model_payload.get("rf_max_residual"),
                                 "worst_joint": worst_joint_combined,
                             },
+                            severity="CRITICAL",
                         )
                     elif len(models_hit) == 2:
                         log_torque_model_event(
@@ -651,6 +706,7 @@ def run_torque_server() -> None:
                                 "rf_max_residual": model_payload.get("rf_max_residual"),
                                 "worst_joint": worst_joint_combined,
                             },
+                            severity="WARNING",
                         )
 
 

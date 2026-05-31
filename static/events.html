@@ -129,6 +129,7 @@ select {
 .method-tab.active.pca-tab    { background: #1d4ed8; border-color: #1d4ed8; }
 .method-tab.active.ae-tab     { background: #7c3aed; border-color: #7c3aed; }
 .method-tab.active.comb-tab   { background: #be185d; border-color: #be185d; }
+.method-tab.active.rf-tab     { background: #f59e0b; border-color: #f59e0b; }
 .method-tab.active.all-tab    { background: #374151; border-color: #6b7280; }
 
 #counter {
@@ -237,6 +238,12 @@ input:checked + .slider-toggle::before { transform: translateX(20px); }
   box-shadow: 0 0 10px rgba(236, 72, 153, 0.18);
 }
 
+/* Random Forest events */
+.events-list .event.RF {
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.06);
+}
+
 /* Old live-mode event types */
 .events-list .event.TRIPLE_THREAT {
   border-color: #ff4500;
@@ -271,6 +278,7 @@ input:checked + .slider-toggle::before { transform: translateX(20px); }
 .chip.pca    { background: #1d4ed8; color: #fff; }
 .chip.ae     { background: #7c3aed; color: #fff; }
 .chip.comb   { background: #be185d; color: #fff; }
+.chip.rf     { background: #f59e0b; color: #111; }
 .chip.live-chip { background: #374151; color: #d1d5db; }
 
 /* Info section on mode switch */
@@ -332,6 +340,7 @@ input:checked + .slider-toggle::before { transform: translateX(20px); }
       <button class="method-tab pca-tab" data-method="PCA" id="tab-pca">PCA</button>
       <button class="method-tab ae-tab" data-method="Autoencoder" id="tab-ae">Autoencoder</button>
       <button class="method-tab comb-tab" data-method="Combined" id="tab-combined">Combined</button>
+      <button class="method-tab rf-tab" data-method="RandomForest" id="tab-rf">Random Forest</button>
     </div>
 
     <div id="modeInfo" class="mode-info" style="display:none;"></div>
@@ -505,7 +514,7 @@ let staticPcaAnomalies  = [];   // normalized PCA anomalies
 let staticAeAnomalies   = [];   // normalized AE anomalies
 let staticCombined      = [];   // derived combined
 
-let activeMethod = 'all';   // 'all' | 'PCA' | 'Autoencoder' | 'Combined'
+let activeMethod = 'all';   // 'all' | 'PCA' | 'Autoencoder' | 'Combined' | 'RandomForest'
 
 /* ═══════════════════════════════════════════════════════════════════
    LIVE MODE — render from /errors
@@ -539,6 +548,11 @@ function fmtMetaLive(type, meta = {}) {
     const models = Array.isArray(meta.models) ? meta.models.join(' | ') : '-';
     return `⚡ Joint ${meta.worst_joint} Δ=${num2(meta.max_diff)} (thr=${meta.torque_thr}) | Active Models: ${models} | Frame ${meta.frame_no}`;
   }
+  if (type === 'TORQUE_RF') {
+    const joints = Array.isArray(meta.anomaly_joints) ? meta.anomaly_joints.map(j => `A${j}`).join(', ') : '-';
+    return `Residual: ${num4(meta.score)} (thr: ${num4(meta.threshold)}) | Joint: A${meta.worst_joint || '?'} | Frame: ${meta.frame_no}` +
+      (joints && joints !== '-' ? `<br>Anomaly joints: ${joints}` : '');
+  }
   return JSON.stringify(meta);
 }
 
@@ -562,7 +576,8 @@ function renderLiveEvents(data) {
   const methodTypeMap = {
     'PCA'        : ['TORQUE_PCA'],
     'Autoencoder': ['TORQUE_AUTOENCODER'],
-    'Combined'   : ['TORQUE_COMBINED', 'TORQUE_TRIPLE_THREAT'],
+    'Combined'   : ['TORQUE_COMBINED', 'TORQUE_TRIPLE_COMBINED', 'TORQUE_TRIPLE_THREAT'],
+    'RandomForest': ['TORQUE_RF'],
     'all'        : null   // no filter
   };
   const allowedTypes = methodTypeMap[method];
@@ -586,6 +601,7 @@ function renderLiveEvents(data) {
     if (e.type === 'TORQUE_PCA')         extraClass = 'PCA';
     if (e.type === 'TORQUE_AUTOENCODER') extraClass = 'AUTOENCODER';
     if (e.type === 'TORQUE_COMBINED')    extraClass = 'COMBINED';
+    if (e.type === 'TORQUE_RF')          extraClass = 'RF';
     if (e.type === 'TORQUE_TRIPLE_THREAT') extraClass = 'TRIPLE_THREAT';
 
     let sevBadge = '';
@@ -599,6 +615,7 @@ function renderLiveEvents(data) {
     if (e.type === 'TORQUE_PCA')          typeChip = `<span class="chip pca">PCA</span>`;
     if (e.type === 'TORQUE_AUTOENCODER')  typeChip = `<span class="chip ae">AE</span>`;
     if (e.type === 'TORQUE_COMBINED')     typeChip = `<span class="chip comb">COMBINED</span>`;
+    if (e.type === 'TORQUE_RF')           typeChip = `<span class="chip rf">RF</span>`;
 
     html += `
       <div class="event ${extraClass}">
@@ -685,6 +702,10 @@ function renderStaticEvents() {
     const sorted = sortCombinedDesc(staticCombined);
     html  = sorted.map(c => buildCombinedCard(c)).join('');
     items = sorted.length;
+  } else if (method === 'RandomForest') {
+    statusDiv.textContent = `Random Forest anomalies are only available in Live Mode (from /errors).`;
+    html = '';
+    items = 0;
   }
 
   eventsDiv.innerHTML = html || `<div class="meta">No anomalies matching the filter.</div>`;

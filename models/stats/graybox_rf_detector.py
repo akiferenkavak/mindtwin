@@ -35,6 +35,17 @@ class GrayboxRFDetector:
     @classmethod
     def load(cls, model_path: str, threshold_path: str) -> "GrayboxRFDetector":
         bundle = joblib.load(model_path)
+        models = bundle.get("models") or []
+
+        # Avoid loky/multiprocessing issues (especially in sandboxed envs)
+        # by forcing single-threaded prediction.
+        for mdl in models:
+            if hasattr(mdl, "n_jobs"):
+                try:
+                    mdl.n_jobs = 1
+                except Exception:
+                    pass
+
         with open(threshold_path, "r", encoding="utf-8") as f:
             meta = json.load(f)
 
@@ -53,7 +64,7 @@ class GrayboxRFDetector:
                 use_inv_dyn = False
 
         return cls(
-            models=bundle["models"],
+            models=models,
             thresholds=meta["thresholds"],
             producer_scale=float(meta.get("producer_scale", 1.0)),
             feature_dim=int(meta.get("feature_dim", 12)),

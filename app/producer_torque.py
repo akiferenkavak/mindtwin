@@ -64,13 +64,14 @@ def pick_csv_from_user(cli_path: Optional[str] = None):
             return False
 
     possible_paths = [
-        # Prefer full KUKA log that contains AXIS_ACT (needed for RF kinematics).
-        "autoencoder/Data_for_Train/kuka_log_900scnd_100hz(=5,8hz).csv",
-        "../autoencoder/Data_for_Train/kuka_log_900scnd_100hz(=5,8hz).csv",
+        # Use the injected dataset by default so PCA / AE / RF stay aligned.
         "data/kuka_log600_scnd_20hz(canta)_injected.csv",
         "../data/kuka_log600_scnd_20hz(canta)_injected.csv",
         "data/kuka_log600_scnd_20hz(canta).csv",
         "../data/kuka_log600_scnd_20hz(canta).csv",
+        # Optional: larger raw dataset (may yield different calibration scale).
+        "autoencoder/Data_for_Train/kuka_log_900scnd_100hz(=5,8hz).csv",
+        "../autoencoder/Data_for_Train/kuka_log_900scnd_100hz(=5,8hz).csv",
     ]
     for p in possible_paths:
         if os.path.exists(p):
@@ -348,6 +349,9 @@ def main():
             "timestamp": ts,
             "torque_ideal": ideal,
             "torque_actual": actual,
+            # Send raw torque + calibration scale so consumer can normalize per-model consistently.
+            "torque_actual_raw": actual_raw,
+            "producer_scale": scale,
         }
 
         # Eklem açıları, hızları ve ivmeleri — graybox RF (ters dinamik) için

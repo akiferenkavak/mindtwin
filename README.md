@@ -114,6 +114,23 @@ If you keep CSVs inside this repo, place them under `data/` and pass paths like:
 
 *(See screenshots below for Thermal, Torque, and Events dashboards.)*
 
+---
+
+## 📈 Model Quality Graphs (AE / RF / PCA)
+
+To generate presentation-ready graphs (2 per model, total 6 PNGs) under `artifacts/quality_graphs/`:
+
+```bash
+python -X utf8 models/stats/generate_quality_graphs.py \
+  --out artifacts/quality_graphs \
+  --rf-csv "data/kuka_log600_scnd_20hz(canta)_injected.csv"
+```
+
+Outputs:
+- `ae_timeseries.png`, `ae_root_cause_counts.png`
+- `rf_timeseries_max_residual.png`, `rf_residual_q95_vs_threshold.png`
+- `pca_timeseries_dual_axis.png`, `pca_worst_feature_counts.png`
+
 
 <img width="1455" height="830" alt="image" src="https://github.com/user-attachments/assets/aadcbc15-d6bb-4cf2-be35-9e986f9c24ab" />
 
@@ -122,4 +139,3 @@ If you keep CSVs inside this repo, place them under `data/` and pass paths like:
 <img width="1455" height="830" alt="image" src="https://github.com/user-attachments/assets/e4d1b0f3-153f-4f1f-bc7e-69cdf13939a6" />
 
 <img width="1455" height="830" alt="image" src="https://github.com/user-attachments/assets/bab715fe-c84a-4dc9-be37-c808a4b6ca54" />
-

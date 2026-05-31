@@ -15,31 +15,37 @@ body {
 
 nav {
   background: #171616;
-  padding: 1rem 2.5rem;
   display: flex;
-  gap: 1rem;
-  margin-bottom: 2rem;
-  border-radius: 12px;
   align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding: 1rem 2.5rem;
+  border-radius: 12px;
 }
 
 nav .title {
   font-weight: 700;
-  color: #8b1d1d;
+  color: #911212;
   margin-right: auto;
+  font-size: 1.1rem;
 }
 
 nav a {
-  color: #6c2525;
+  color: #945151;
   text-decoration: none;
   font-weight: 600;
   padding: 0.45rem 0.9rem;
   border-radius: 8px;
+  transition: background 0.2s ease, color 0.2s ease;
 }
 
-nav a:hover {
-  color: #fff;
+nav a:visited {
+  color: #945151;
+}
+
+nav a:hover, nav a.active {
   background: rgba(71,132,230,0.788);
+  color: #fff;
 }
 
 .page {

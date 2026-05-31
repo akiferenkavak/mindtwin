@@ -724,7 +724,7 @@ def pca_results():
 # ANOMALY HELPERS (backend-side)
 # ---------------------------
 
-def _extract_second_from_ts(ts: str) -> str | None:
+def _extract_second_from_ts(ts: str) -> Optional[str]:
     """Extract HH:mm:ss from various timestamp formats."""
     if not ts:
         return None

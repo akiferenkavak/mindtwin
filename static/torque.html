@@ -49,6 +49,10 @@
       transition: background 0.2s, color 0.2s;
     }
 
+    nav a:visited {
+      color: #945151;
+    }
+
     nav a:hover {
       background: rgba(71, 132, 230, 0.788);
       color: #fff;
@@ -212,6 +216,65 @@
 
     .mini-pill strong {
       color: #eee;
+    }
+
+    /* ── Axis counter cards (from main) ─────────────────────── */
+    .counter-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    @media (max-width: 900px) {
+      .counter-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    @media (max-width: 560px) {
+      .counter-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .counter-card {
+      background: #181818;
+      border: 1px solid #2d2d2d;
+      border-radius: 16px;
+      padding: 1.25rem 1rem 1rem 1rem;
+      position: relative;
+      text-align: center;
+      transition: box-shadow 0.25s;
+      overflow: hidden;
+    }
+
+    .counter-card.bumped {
+      box-shadow: 0 0 18px rgba(255, 255, 255, 0.1);
+    }
+
+    .counter-card .accent-bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 4px;
+      border-radius: 16px 16px 0 0;
+    }
+
+    .counter-card .axis-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #6b7280;
+      margin-bottom: 0.3rem;
+    }
+
+    .counter-card .big-count {
+      font-size: 3rem;
+      font-weight: 900;
+      line-height: 1;
     }
 
     .chart-section {
@@ -453,11 +516,12 @@
       <span class="live-indicator" id="liveIndicator">
         <span class="live-dot"></span> LIVE
       </span>
-
-      <button class="btn btn-secondary" id="replayBtn" onclick="startReplay()" title="Replay events from result files">
-        ↺ Replay
-      </button>
     </div>
+  </div>
+
+  <!-- Axis error counters (like main) -->
+  <div class="counter-grid" id="counterGrid">
+    <!-- Populated by JS -->
   </div>
 
   <div class="mini-info">
@@ -528,6 +592,8 @@
       '#a855f7'
     ];
 
+    const LS_TORQUE_AXIS_COUNTS_KEY = 'mindtwin_torque_axis_counts_v1';
+
     const SLIDE_WINDOW = 80;
 
     let liveMode = true;
@@ -546,6 +612,97 @@
     const frameText = document.getElementById('frameText');
     const eventText = document.getElementById('eventText');
     const statusDiv = document.getElementById('status');
+
+	    // ─────────────────────────────────────────────────────────────
+	    // AXIS COUNTERS (persist across page changes)
+	    // ─────────────────────────────────────────────────────────────
+	    const axisCountsLive = {};
+	    const axisCountsReplay = {};
+	    let axisCounts = axisCountsLive;
+
+	    function resetAxisCounts(target) {
+	      TORQUE_FEATURES.forEach(f => { target[f] = 0; });
+	    }
+
+	    resetAxisCounts(axisCountsLive);
+	    resetAxisCounts(axisCountsReplay);
+
+	    function saveAxisCounts() {
+	      try {
+	        localStorage.setItem(LS_TORQUE_AXIS_COUNTS_KEY, JSON.stringify(axisCountsLive));
+	      } catch {
+	        // ignore
+	      }
+	    }
+
+	    function restoreAxisCounts() {
+	      try {
+	        const raw = localStorage.getItem(LS_TORQUE_AXIS_COUNTS_KEY);
+	        if (!raw) return;
+	        const parsed = JSON.parse(raw);
+	        if (!parsed || typeof parsed !== 'object') return;
+	        TORQUE_FEATURES.forEach(f => {
+	          const v = Number(parsed[f]);
+	          if (Number.isFinite(v)) axisCountsLive[f] = Math.max(0, v);
+	        });
+	      } catch {
+	        // ignore
+	      }
+	    }
+
+	    function enterLiveAxisCounts() {
+	      axisCounts = axisCountsLive;
+	      renderAxisCards();
+	      saveAxisCounts();
+	    }
+
+	    function enterReplayAxisCounts(reset = true) {
+	      axisCounts = axisCountsReplay;
+	      if (reset) resetAxisCounts(axisCountsReplay);
+	      renderAxisCards();
+	    }
+
+    function initAxisCards() {
+      const grid = document.getElementById('counterGrid');
+      if (!grid) return;
+      grid.innerHTML = TORQUE_FEATURES.map((feat, idx) => {
+        const ax = `A${idx + 1}`;
+        const col = AXIS_COLORS[idx];
+        return `
+          <div class="counter-card" id="card-${feat}">
+            <div class="accent-bar" style="background:${col};"></div>
+            <div class="axis-label">AXIS ${ax}</div>
+            <div class="big-count" id="count-${feat}" style="color:${col}">0</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderAxisCards() {
+      TORQUE_FEATURES.forEach(feat => {
+        const el = document.getElementById(`count-${feat}`);
+        if (el) el.textContent = String(axisCounts[feat] || 0);
+      });
+    }
+
+	    function bumpAxisCard(feat) {
+	      const card = document.getElementById(`card-${feat}`);
+	      if (!card) return;
+	      card.classList.remove('bumped');
+	      void card.offsetWidth;
+	      card.classList.add('bumped');
+	      setTimeout(() => card.classList.remove('bumped'), 350);
+	    }
+
+	    function incrementAxisCount(feat, delta) {
+	      if (!TORQUE_FEATURES.includes(feat)) return;
+	      axisCounts[feat] = Math.max(0, (axisCounts[feat] || 0) + (Number(delta) || 0));
+	      renderAxisCards();
+	      bumpAxisCard(feat);
+	      if (axisCounts === axisCountsLive) {
+	        saveAxisCounts();
+	      }
+	    }
 
     function baselineValue(axisIndex) {
       return 0.04 + axisIndex * 0.025;
@@ -887,8 +1044,9 @@
         const res = await fetch('/errors', { cache: 'no-store' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-        const data = await res.json();
-        if (!Array.isArray(data)) return;
+	        const data = await res.json();
+	        if (!Array.isArray(data)) return;
+	        if (!liveMode) return;
 
         const torqueEvents = data.filter(e => {
           const text = `${e.type || ''} ${e.message || ''} ${JSON.stringify(e.meta || {})}`.toUpperCase();
@@ -916,6 +1074,34 @@
           const applied = applyErrorEventToTorqueChart(e);
           if (applied) appliedCount++;
         }
+
+        // Recompute counts from the whole /errors list (dedup by secondKey+feature)
+        // so page refresh / live toggle doesn't double-count.
+        const bestByKey = new Map(); // secondKey|feature -> level (1 or 2)
+        for (const e of torqueEvents) {
+          const feature = getFeatureFromErrorEvent(e);
+          if (!feature || !TORQUE_FEATURES.includes(feature)) continue;
+          const secondKey = extractSecond(e.timestamp || '') || extractSecond(JSON.stringify(e.meta || {})) || '';
+          if (!secondKey) continue;
+          const level = getLevelFromErrorEvent(e);
+          if (level == null) continue;
+          const key = `${secondKey}|${feature}`;
+          const prev = bestByKey.get(key) || 0;
+          bestByKey.set(key, Math.max(prev, level));
+        }
+
+        const newCounts = {};
+        TORQUE_FEATURES.forEach(f => { newCounts[f] = 0; });
+        for (const [key, level] of bestByKey.entries()) {
+          const feat = key.split('|')[1];
+          if (!feat || !newCounts.hasOwnProperty(feat)) continue;
+          newCounts[feat] += (level === 2 ? 2 : 1);
+        }
+
+	        TORQUE_FEATURES.forEach(f => { axisCountsLive[f] = newCounts[f]; });
+	        axisCounts = axisCountsLive;
+	        renderAxisCards();
+	        saveAxisCounts();
 
         eventText.textContent = `${seenTorqueErrorEvents.size} torque events`;
 
@@ -1086,17 +1272,18 @@
       }
     }
 
-    function startReplay() {
-      stopReplay();
-      stopErrorPollingForTorqueChart();
+	    function startReplay() {
+	      stopReplay();
+	      stopErrorPollingForTorqueChart();
 
-      liveMode = false;
-      localStorage.setItem('mindtwin_global_live_mode', 'false');
+	      liveMode = false;
+	      localStorage.setItem('mindtwin_global_live_mode', 'false');
 
-      const toggle = document.getElementById('liveModeToggle');
-      if (toggle) toggle.checked = false;
+	      const toggle = document.getElementById('liveModeToggle');
+	      if (toggle) toggle.checked = false;
 
-      document.getElementById('liveIndicator').classList.remove('on');
+	      document.getElementById('liveIndicator').classList.remove('on');
+	      enterReplayAxisCounts(true);
 
       if (!dataLoaded) {
         loadData();
@@ -1118,11 +1305,11 @@
       frameText.textContent = `0 / ${replayEvents.length}`;
 
       const replayBtn = document.getElementById('replayBtn');
-      replayBtn.disabled = true;
+      if (replayBtn) replayBtn.disabled = true;
 
       if (!replayEvents.length) {
         statusDiv.innerHTML = 'No anomaly event found in PCA / Autoencoder result files.';
-        replayBtn.disabled = false;
+        if (replayBtn) replayBtn.disabled = false;
         return;
       }
 
@@ -1144,7 +1331,8 @@
           valuesByFeature[event.feature] = 1;
         }
 
-        pushFrame(frameNo, valuesByFeature);
+	        pushFrame(frameNo, valuesByFeature);
+	        incrementAxisCount(event.feature, event.type === 'combined' ? 2 : 1);
 
         const pct = Math.round((replayIndex / replayEvents.length) * 100);
         document.getElementById('replayBarFill').style.width = pct + '%';
@@ -1178,12 +1366,13 @@
       }
     }
 
-    function setLiveMode(on, saveToStorage = true) {
-      liveMode = on;
+	    function setLiveMode(on, saveToStorage = true) {
+	      const wasLive = liveMode;
+	      liveMode = on;
 
-      if (saveToStorage) {
-        localStorage.setItem('mindtwin_global_live_mode', String(on));
-      }
+	      if (saveToStorage) {
+	        localStorage.setItem('mindtwin_global_live_mode', String(on));
+	      }
 
       const toggle = document.getElementById('liveModeToggle');
       if (toggle && toggle.checked !== on) {
@@ -1191,11 +1380,12 @@
       }
 
       document.getElementById('liveIndicator').classList.toggle('on', on);
-      document.getElementById('replayBarWrap').style.display = on ? 'none' : 'block';
+	      document.getElementById('replayBarWrap').style.display = on ? 'none' : 'block';
 
-      if (on) {
-        stopReplay();
-        clearChart();
+	      if (on) {
+	        enterLiveAxisCounts();
+	        stopReplay();
+	        clearChart();
 
         seenTorqueErrorEvents.clear();
         torqueEventFrame = 0;
@@ -1207,10 +1397,14 @@
 
         startErrorPollingForTorqueChart();
 
-      } else {
-        stopErrorPollingForTorqueChart();
+	      } else {
+	        if (wasLive) {
+	          saveAxisCounts();
+	        }
+	        enterReplayAxisCounts(true);
+	        stopErrorPollingForTorqueChart();
 
-        sourceText.textContent = 'Result files replay';
+	        sourceText.textContent = 'Result files replay';
 
         if (dataLoaded) {
           startReplay();
@@ -1352,7 +1546,15 @@
       document.getElementById('liveModeToggle').checked = liveMode;
     }
 
-    document.getElementById('liveIndicator').classList.toggle('on', liveMode);
+	    document.getElementById('liveIndicator').classList.toggle('on', liveMode);
+
+	    initAxisCards();
+	    restoreAxisCounts();
+	    if (liveMode) {
+	      enterLiveAxisCounts();
+	    } else {
+	      enterReplayAxisCounts(true);
+	    }
 
     if (liveMode) {
       sourceText.textContent = 'Events /errors';

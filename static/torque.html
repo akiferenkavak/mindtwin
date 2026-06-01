@@ -762,7 +762,9 @@
       pointHoverRadius: 5,
       borderWidth: 2.5,
       tension: 0.25,
-      fill: false
+      fill: false,
+      // Custom metadata per-point (models, timestamp, etc.)
+      _meta: []
     }));
 
     const ctx = document.getElementById('chart').getContext('2d');
@@ -832,20 +834,37 @@
             callbacks: {
               label: function (context) {
                 const y = context.parsed.y;
+                const dataIndex = context.dataIndex;
+                const meta = context.dataset._meta ? context.dataset._meta[dataIndex] : null;
+                const modelsList = meta && meta.models && meta.models.length > 0
+                  ? meta.models.join(' + ')
+                  : null;
 
                 if (y >= 2.95) {
-                  return `${context.dataset.label}: 3-model combined anomaly`;
+                  const mStr = modelsList || 'PCA + AE + RF';
+                  return `${context.dataset.label}: 🔴 Triple anomaly (${mStr})`;
                 }
 
                 if (y >= 1.95) {
-                  return `${context.dataset.label}: Combined anomaly`;
+                  const mStr = modelsList || '2 models';
+                  return `${context.dataset.label}: 🟠 Combined anomaly (${mStr})`;
                 }
 
                 if (y >= 0.95) {
-                  return `${context.dataset.label}: PCA / AE / RF anomaly`;
+                  const mStr = modelsList || 'Unknown';
+                  return `${context.dataset.label}: 🟡 Anomaly — ${mStr}`;
                 }
 
-                return `${context.dataset.label}: Normal`;
+                return `${context.dataset.label}: ✅ Normal`;
+              },
+              afterLabel: function (context) {
+                const dataIndex = context.dataIndex;
+                const meta = context.dataset._meta ? context.dataset._meta[dataIndex] : null;
+                if (!meta) return null;
+                const parts = [];
+                if (meta.ts) parts.push(`Time: ${meta.ts}`);
+                if (meta.frame != null) parts.push(`Frame: ${meta.frame}`);
+                return parts.length > 0 ? parts : null;
               }
             }
           }
@@ -858,6 +877,7 @@
         dataset.data = [
           { x: 0, y: baselineValue(index) }
         ];
+        dataset._meta = [null]; // baseline point has no meta
       });
 
       liveChart.options.scales.x.min = 0;
@@ -865,17 +885,27 @@
       liveChart.update('none');
     }
 
-    function pushFrame(frameNo, valuesByFeature = {}) {
+    /**
+     * Push a frame to the chart.
+     * @param {number} frameNo
+     * @param {Object} valuesByFeature  { 'TORQUE_A1': 1, ... }
+     * @param {Object} metaByFeature    { 'TORQUE_A1': { models: ['PCA'], ts: '...', frame: 42 }, ... }
+     */
+    function pushFrame(frameNo, valuesByFeature = {}, metaByFeature = {}) {
       TORQUE_FEATURES.forEach((feature, index) => {
         const yValue = valuesByFeature[feature] ?? baselineValue(index);
+        const pointMeta = metaByFeature[feature] || null;
 
         chartDatasets[index].data.push({
           x: frameNo,
           y: yValue
         });
+        if (!chartDatasets[index]._meta) chartDatasets[index]._meta = [];
+        chartDatasets[index]._meta.push(pointMeta);
 
         if (chartDatasets[index].data.length > SLIDE_WINDOW) {
           chartDatasets[index].data.shift();
+          chartDatasets[index]._meta.shift();
         }
       });
 
@@ -1010,15 +1040,8 @@
     }
 
     function applyErrorEventToTorqueChart(e) {
-      console.log('[TORQUE GRAPH EVENT]', e);
-
       const level = getLevelFromErrorEvent(e);
       const feature = getFeatureFromErrorEvent(e);
-
-      console.log('[PARSED]', {
-        level,
-        feature
-      });
 
       if (level == null) {
         return false;
@@ -1036,16 +1059,39 @@
 
       const frameNo = getFrameFromErrorEvent(e);
 
+      // Derive models list from event type and meta
+      let models = [];
+      const meta = e.meta || {};
+      if (Array.isArray(meta.models)) {
+        // TORQUE_COMBINED and TORQUE_TRIPLE_COMBINED carry this array
+        models = meta.models.slice();
+      } else {
+        // Single-model events — infer from type
+        if ((e.type || '').includes('PCA'))          models = ['PCA'];
+        else if ((e.type || '').includes('AUTOENCODER')) models = ['AE'];
+        else if ((e.type || '').includes('RF'))       models = ['RF'];
+        else if (level === 3)                         models = ['PCA', 'AE', 'RF'];
+        else if (level === 2)                         models = ['PCA', 'AE'];  // fallback
+      }
+
       const valuesByFeature = {};
       valuesByFeature[feature] = level;
 
-      pushFrame(frameNo, valuesByFeature);
+      const metaByFeature = {};
+      metaByFeature[feature] = {
+        models,
+        ts: e.timestamp || null,
+        frame: frameNo
+      };
+
+      pushFrame(frameNo, valuesByFeature, metaByFeature);
 
       const axis = feature.replace('TORQUE_', '');
+      const modelsStr = models.length > 0 ? models.join(' + ') : (level === 3 ? 'PCA+AE+RF' : level === 2 ? '2 models' : e.type || '?');
       const label =
-        level === 3 ? 'Triple combined anomaly'
-        : level === 2 ? 'Combined anomaly'
-        : 'PCA / AE / RF anomaly';
+        level === 3 ? `Triple combined anomaly (${modelsStr})` :
+        level === 2 ? `Combined anomaly (${modelsStr})` :
+        `${modelsStr} anomaly`;
 
       frameText.textContent = `Frame ${frameNo}`;
       sourceText.textContent = 'Events /errors';
@@ -1156,16 +1202,19 @@
       sourceText.textContent = 'Loading result files…';
 
       try {
-        const [pcaRes, aeRes] = await Promise.all([
+        const [pcaRes, aeRes, rfRes] = await Promise.all([
           fetch('/api/pca/results', { cache: 'no-store' }),
-          fetch('/api/autoencoder/results', { cache: 'no-store' })
+          fetch('/api/autoencoder/results', { cache: 'no-store' }),
+          fetch('/api/rf/results', { cache: 'no-store' })
         ]);
 
         const pcaJson = pcaRes.ok ? await pcaRes.json() : {};
         const aeJson = aeRes.ok ? await aeRes.json() : {};
+        const rfJson = rfRes.ok ? await rfRes.json() : {};
 
         const pcaAnomalies = [];
         const aeAnomalies = [];
+        const rfAnomalies = [];
 
         const pcaPerFeature = pcaJson.per_feature || {};
         for (const [feature, items] of Object.entries(pcaPerFeature)) {
@@ -1209,68 +1258,102 @@
           }
         }
 
+        // RF results: from overall (is_anomaly rows) and per_feature
+        const rfOverall = rfJson.overall || [];
+        for (const row of rfOverall) {
+          if (!row.is_anomaly) continue;
+          const ts = row.timestamp || row.time || '';
+          const secondKey = extractSecond(ts);
+          // Use anomaly_joints array if available, otherwise worst_joint
+          const joints = Array.isArray(row.anomaly_joints) && row.anomaly_joints.length > 0
+            ? row.anomaly_joints
+            : (row.worst_joint != null ? [row.worst_joint] : []);
+          for (const j of joints) {
+            const feat = normalizeFeatureName(String(j)) || normalizeFeatureName(`A${j}`);
+            if (!feat) continue;
+            rfAnomalies.push({ secondKey, feature: feat, timestamp: ts, type: 'rf' });
+          }
+        }
+        const rfPerFeature = rfJson.per_feature || {};
+        for (const [feature, items] of Object.entries(rfPerFeature)) {
+          const normalizedFeature = normalizeFeatureName(feature);
+          if (!normalizedFeature) continue;
+          const arr = Array.isArray(items) ? items : [];
+          for (const row of arr) {
+            if (!row.is_anomaly) continue;
+            const ts = row.timestamp || row.time || '';
+            rfAnomalies.push({ secondKey: extractSecond(ts), feature: normalizedFeature, timestamp: ts, type: 'rf' });
+          }
+        }
+        // Deduplicate RF
+        const rfSeen = new Set();
+        const rfAnomaliesDeduped = rfAnomalies.filter(item => {
+          const k = `${item.secondKey}|${item.feature}`;
+          if (rfSeen.has(k)) return false;
+          rfSeen.add(k);
+          return true;
+        });
+
+        // Build per-key sets
         const pcaKeys = new Set();
         const aeKeys = new Set();
+        const rfKeys = new Set();
 
         pcaAnomalies.forEach(item => {
-          if (item.secondKey && item.feature) {
-            pcaKeys.add(`${item.secondKey}|${item.feature}`);
-          }
+          if (item.secondKey && item.feature) pcaKeys.add(`${item.secondKey}|${item.feature}`);
         });
-
         aeAnomalies.forEach(item => {
-          if (item.secondKey && item.feature) {
-            aeKeys.add(`${item.secondKey}|${item.feature}`);
-          }
+          if (item.secondKey && item.feature) aeKeys.add(`${item.secondKey}|${item.feature}`);
+        });
+        rfAnomaliesDeduped.forEach(item => {
+          if (item.secondKey && item.feature) rfKeys.add(`${item.secondKey}|${item.feature}`);
         });
 
-        const combinedKeys = new Set();
-        pcaKeys.forEach(key => {
-          if (aeKeys.has(key)) {
-            combinedKeys.add(key);
-          }
-        });
+        // Determine event type per key: triple > combined (2-model) > single
+        const allKeys = new Set([...pcaKeys, ...aeKeys, ...rfKeys]);
+        const keyTypeMap = {};   // key -> { type, models }
+        for (const key of allKeys) {
+          const hasPca = pcaKeys.has(key);
+          const hasAe  = aeKeys.has(key);
+          const hasRf  = rfKeys.has(key);
+          const count  = (hasPca ? 1 : 0) + (hasAe ? 1 : 0) + (hasRf ? 1 : 0);
+          const models = [
+            ...(hasPca ? ['PCA'] : []),
+            ...(hasAe  ? ['AE']  : []),
+            ...(hasRf  ? ['RF']  : [])
+          ];
+          keyTypeMap[key] = {
+            type: count >= 3 ? 'triple' : count >= 2 ? 'combined' : (
+              hasPca ? 'pca' : hasAe ? 'ae' : 'rf'
+            ),
+            models
+          };
+        }
 
         const eventMap = new Map();
 
-        pcaAnomalies.forEach(item => {
-          if (!item.secondKey || !item.feature) return;
+        // Add all anomalies as event entries, using the best type from keyTypeMap
+        const allAnomalies = [
+          ...pcaAnomalies,
+          ...aeAnomalies,
+          ...rfAnomaliesDeduped
+        ];
 
+        for (const item of allAnomalies) {
+          if (!item.secondKey || !item.feature) continue;
           const key = `${item.secondKey}|${item.feature}`;
-          const mapKey = combinedKeys.has(key)
-            ? `combined|${key}`
-            : `pca|${key}`;
-
+          const info = keyTypeMap[key] || { type: item.type, models: [item.type.toUpperCase()] };
+          const mapKey = `${info.type}|${key}`;
           if (!eventMap.has(mapKey)) {
             eventMap.set(mapKey, {
               sortKey: item.secondKey,
               secondKey: item.secondKey,
               feature: item.feature,
-              type: combinedKeys.has(key) ? 'combined' : 'pca'
+              type: info.type,
+              models: info.models
             });
           }
-        });
-
-        aeAnomalies.forEach(item => {
-          if (!item.secondKey || !item.feature) return;
-
-          const key = `${item.secondKey}|${item.feature}`;
-
-          if (combinedKeys.has(key)) {
-            return;
-          }
-
-          const mapKey = `ae|${key}`;
-
-          if (!eventMap.has(mapKey)) {
-            eventMap.set(mapKey, {
-              sortKey: item.secondKey,
-              secondKey: item.secondKey,
-              feature: item.feature,
-              type: 'ae'
-            });
-          }
-        });
+        }
 
         replayEvents = [...eventMap.values()].sort((a, b) => {
           return String(a.sortKey).localeCompare(String(b.sortKey));
@@ -1345,15 +1428,28 @@
 
         const frameNo = replayIndex;
         const valuesByFeature = {};
+        const metaByFeature = {};
 
-        if (event.type === 'combined') {
-          valuesByFeature[event.feature] = 2;
-        } else {
-          valuesByFeature[event.feature] = 1;
-        }
+        // Level: triple=3, combined(2-model)=2, single=1
+        const level =
+          event.type === 'triple'   ? 3 :
+          event.type === 'combined' ? 2 : 1;
 
-	        pushFrame(frameNo, valuesByFeature);
-	        incrementAxisCount(event.feature, event.type === 'combined' ? 2 : 1);
+        const models = event.models || [
+          event.type === 'triple'   ? ['PCA','AE','RF'] :
+          event.type === 'combined' ? ['PCA','AE'] :
+          [event.type.toUpperCase()]
+        ].flat();
+
+        valuesByFeature[event.feature] = level;
+        metaByFeature[event.feature] = {
+          models,
+          ts: event.secondKey || null,
+          frame: frameNo
+        };
+
+	        pushFrame(frameNo, valuesByFeature, metaByFeature);
+	        incrementAxisCount(event.feature, level);
 
         const pct = Math.round((replayIndex / replayEvents.length) * 100);
         document.getElementById('replayBarFill').style.width = pct + '%';
@@ -1363,9 +1459,11 @@
         frameText.textContent = `${replayIndex} / ${replayEvents.length}`;
 
         const axis = event.feature.replace('TORQUE_', '');
-        const label = event.type === 'combined'
-          ? 'Combined anomaly level 2'
-          : 'PCA / Autoencoder anomaly level 1';
+        const modelsStr = models.length > 0 ? models.join(' + ') : '?';
+        const label =
+          level === 3 ? `Triple combined (${modelsStr}) — level 3` :
+          level === 2 ? `Combined (${modelsStr}) — level 2` :
+          `${modelsStr} — level 1`;
 
         statusDiv.innerHTML =
           `<b style="font-size:1rem;color:#4da6ff;">Replay Event</b><br>` +

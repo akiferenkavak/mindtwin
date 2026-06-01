@@ -792,6 +792,7 @@
     function populateFeatureDropdown() {
       if (!allData || !allData.single) return;
       const sel = document.getElementById('featureSelect');
+      const savedVal = sel.value;
       sel.innerHTML = '';
       const features = allData.meta && allData.meta.features
         ? allData.meta.features
@@ -799,17 +800,23 @@
 
       features.forEach(f => {
         const rows = (allData.single[f] || []).length;
-        const anomCount = (allData.single[f] || []).filter(r => r.is_anomaly).length;
         const opt = document.createElement('option');
         opt.value = f;
-        opt.textContent = anomCount > 0 ? `${f}  ⚠ ${anomCount} anomaly` : `${f}  (${rows} pts)`;
+        if (liveMode) {
+          opt.textContent = f;
+        } else {
+          const anomCount = (allData.single[f] || []).filter(r => r.is_anomaly).length;
+          opt.textContent = anomCount > 0 ? `${f}  ⚠ ${anomCount} anomaly` : `${f}  (${rows} pts)`;
+        }
         sel.appendChild(opt);
       });
 
-      // Default to feature with most data points (prefer one with anomalies)
-      const withAnom = features.find(f => (allData.single[f] || []).some(r => r.is_anomaly));
-      const withData = withAnom || features.find(f => (allData.single[f] || []).length > 0) || features[0];
-      if (withData) sel.value = withData;
+      if (savedVal && features.includes(savedVal)) sel.value = savedVal;
+      else {
+        const withAnom = features.find(f => (allData.single[f] || []).some(r => r.is_anomaly));
+        const withData = withAnom || features.find(f => (allData.single[f] || []).length > 0) || features[0];
+        if (withData) sel.value = withData;
+      }
       currentFeature = sel.value;
     }
 
@@ -929,16 +936,23 @@
       );
       document.getElementById('statThr').textContent = typeof thr === 'number' ? thr.toFixed(4) : thr;
 
-      // Feature badge (single mode)
+      // Feature badge (single mode) — only in non-live mode to avoid fake counts
       if (currentMode === 'single') {
         const feat = currentFeature || document.getElementById('featureSelect').value;
-        const fa = (allData.single[feat] || []).filter(d => d.is_anomaly).length;
-        document.getElementById('featureAnomalyBadge').textContent =
-          `${fa} anomal${fa === 1 ? 'y' : 'ies'}`;
-        document.getElementById('featureAnomalyBadge').style.borderColor =
-          fa > 0 ? '#ef4444' : '#333';
-        document.getElementById('featureAnomalyBadge').style.color =
-          fa > 0 ? '#ef4444' : '#aaa';
+        if (!liveMode) {
+          const fa = (allData.single[feat] || []).filter(d => d.is_anomaly).length;
+          document.getElementById('featureAnomalyBadge').textContent =
+            `${fa} anomal${fa === 1 ? 'y' : 'ies'}`;
+          document.getElementById('featureAnomalyBadge').style.borderColor =
+            fa > 0 ? '#ef4444' : '#333';
+          document.getElementById('featureAnomalyBadge').style.color =
+            fa > 0 ? '#ef4444' : '#aaa';
+        } else {
+          // Reset badge — live counts start from 0
+          document.getElementById('featureAnomalyBadge').textContent = '0 anomalies';
+          document.getElementById('featureAnomalyBadge').style.borderColor = '#333';
+          document.getElementById('featureAnomalyBadge').style.color = '#aaa';
+        }
       }
 
       if (liveMode) {
@@ -984,6 +998,17 @@
     function startLive() {
       stopLive();
       if (!liveDataset.length) return;
+
+      // Reset counters to 0 — live mode always starts fresh
+      document.getElementById('statTotal').textContent = '0';
+      document.getElementById('statAnom').textContent  = '0';
+
+      const badge = document.getElementById('featureAnomalyBadge');
+      if (badge) {
+        badge.textContent = '0 anomalies';
+        badge.style.borderColor = '#333';
+        badge.style.color = '#aaa';
+      }
 
       liveIndex = 0;
       createChart();
@@ -1044,7 +1069,20 @@
         chart.update('none');
 
         totalPlayed++;
-        if (d.is_anomaly) totalAnomalies++;
+        if (d.is_anomaly) {
+          totalAnomalies++;
+          // Update feature badge incrementally in live mode
+          if (currentMode === 'single') {
+            const badge = document.getElementById('featureAnomalyBadge');
+            if (badge) {
+              const prev = parseInt(badge.textContent) || 0;
+              const newCount = prev + 1;
+              badge.textContent = `${newCount} anomal${newCount === 1 ? 'y' : 'ies'}`;
+              badge.style.borderColor = '#ef4444';
+              badge.style.color = '#ef4444';
+            }
+          }
+        }
         document.getElementById('statTotal').textContent = totalPlayed.toLocaleString();
         document.getElementById('statAnom').textContent  = totalAnomalies.toLocaleString();
       };
@@ -1080,6 +1118,9 @@
       }
 
       if (!allData) return;
+
+      // Rebuild dropdown to toggle text style (show/hide anomaly counts)
+      populateFeatureDropdown();
 
       if (liveMode) {
         startLive();

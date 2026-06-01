@@ -105,12 +105,12 @@
     }
 
     .tab-btn.active {
-      background: #1a3d6b;
+      background: #911212;
       color: #fff;
     }
 
     .tab-btn:hover:not(.active) {
-      background: rgba(26, 61, 107, 0.35);
+      background: rgba(145, 18, 18, 0.25);
       color: #fff;
     }
 
@@ -158,7 +158,7 @@
       transition: 0.3s;
     }
 
-    input:checked + .slider { background: #1a3d6b; }
+    input:checked + .slider { background: #911212; }
     input:checked + .slider::before { transform: translateX(20px); }
 
     .btn {
@@ -175,11 +175,11 @@
     .btn:active { transform: scale(0.97); }
 
     .btn-primary {
-      background: #1a3d6b;
+      background: #911212;
       color: #fff;
     }
 
-    .btn-primary:hover { background: #2254a0; }
+    .btn-primary:hover { background: #b01414; }
 
     .btn-secondary {
       background: #222;
@@ -195,7 +195,7 @@
       align-items: center;
       gap: 0.35rem;
       font-size: 0.82rem;
-      color: #4da6ff;
+      color: #ef4444;
       font-weight: 700;
       opacity: 0;
       transition: opacity 0.3s;
@@ -206,7 +206,7 @@
     .live-dot {
       width: 7px;
       height: 7px;
-      background: #4da6ff;
+      background: #ef4444;
       border-radius: 50%;
       animation: pulse 1.2s infinite;
     }
@@ -244,7 +244,7 @@
     }
 
     select#featureSelect:hover, select#featureSelect:focus {
-      border-color: #1a3d6b;
+      border-color: #911212;
     }
 
     .feature-badge {
@@ -420,7 +420,7 @@
     }
 
     .badge-count {
-      background: #1a3d6b;
+      background: #911212;
       color: #fff;
       border-radius: 20px;
       padding: 0.2rem 0.6rem;
@@ -486,7 +486,7 @@
       height: 64px;
       border-radius: 50%;
       border: none;
-      background: #1a3d6b;
+      background: #911212;
       color: white;
       font-size: 1.1rem;
       font-weight: bold;
@@ -515,7 +515,7 @@
 
     #chat-header {
       padding: 1rem;
-      background: #1a3d6b;
+      background: #911212;
       font-weight: bold;
     }
 
@@ -545,7 +545,7 @@
     }
 
     #send-btn {
-      background: #1a3d6b;
+      background: #911212;
       color: white;
       border: none;
       padding: 1rem;
@@ -905,6 +905,7 @@
     function populateFeatureDropdown() {
       if (!allData || !allData.per_feature) return;
       const sel = document.getElementById('featureSelect');
+      const savedVal = sel.value;
       sel.innerHTML = '';
       const features = allData.meta && allData.meta.feature_columns
         ? allData.meta.feature_columns
@@ -912,16 +913,23 @@
 
       features.forEach(f => {
         const rows      = (allData.per_feature[f] || []).length;
-        const anomCount = (allData.per_feature[f] || []).filter(r => r.is_anomaly).length;
         const opt = document.createElement('option');
         opt.value = f;
-        opt.textContent = anomCount > 0 ? `${f}  ⚠ ${anomCount} anomaly` : `${f}  (${rows} pts)`;
+        if (liveMode) {
+          opt.textContent = f;
+        } else {
+          const anomCount = (allData.per_feature[f] || []).filter(r => r.is_anomaly).length;
+          opt.textContent = anomCount > 0 ? `${f}  ⚠ ${anomCount} anomaly` : `${f}  (${rows} pts)`;
+        }
         sel.appendChild(opt);
       });
 
-      const withAnom = features.find(f => (allData.per_feature[f] || []).some(r => r.is_anomaly));
-      const withData = withAnom || features[0];
-      if (withData) sel.value = withData;
+      if (savedVal && features.includes(savedVal)) sel.value = savedVal;
+      else {
+        const withAnom = features.find(f => (allData.per_feature[f] || []).some(r => r.is_anomaly));
+        const withData = withAnom || features[0];
+        if (withData) sel.value = withData;
+      }
       currentFeature = sel.value;
     }
 
@@ -1057,8 +1065,8 @@
         document.getElementById('ic-both').textContent = bothCount;
       }
 
-      // Feature badge (per-feature mode)
-      if (currentMode === 'feature') {
+      // Feature badge (per-feature mode) — only in non-live mode
+      if (currentMode === 'feature' && !liveMode) {
         const feat = currentFeature || document.getElementById('featureSelect').value;
         const fa = (allData.per_feature[feat] || []).filter(d => d.is_anomaly).length;
         document.getElementById('featureAnomalyBadge').textContent =
@@ -1067,6 +1075,11 @@
           fa > 0 ? '#ef4444' : '#333';
         document.getElementById('featureAnomalyBadge').style.color =
           fa > 0 ? '#ef4444' : '#aaa';
+      } else if (currentMode === 'feature' && liveMode) {
+        // Reset badge in live mode — counts will grow from 0 as data arrives
+        document.getElementById('featureAnomalyBadge').textContent = '0 anomalies';
+        document.getElementById('featureAnomalyBadge').style.borderColor = '#333';
+        document.getElementById('featureAnomalyBadge').style.color = '#aaa';
       }
 
       if (liveMode) {
@@ -1107,6 +1120,17 @@
     function startLive() {
       stopLive();
       if (!liveDataset.length) return;
+
+      // Reset counters to 0 — live mode starts fresh
+      document.getElementById('statTotal').textContent = '0';
+      document.getElementById('statAnom').textContent  = '0';
+
+      const badge = document.getElementById('featureAnomalyBadge');
+      if (badge) {
+        badge.textContent = '0 anomalies';
+        badge.style.borderColor = '#333';
+        badge.style.color = '#aaa';
+      }
 
       liveIndex = 0;
       createChart();
@@ -1168,7 +1192,20 @@
         chart.update('none');
 
         totalPlayed++;
-        if (anom) totalAnomalies++;
+        if (anom) {
+          totalAnomalies++;
+          // Update feature badge incrementally in live mode
+          if (currentMode === 'feature') {
+            const badge = document.getElementById('featureAnomalyBadge');
+            if (badge) {
+              const prev = parseInt(badge.textContent) || 0;
+              const newCount = prev + 1;
+              badge.textContent = `${newCount} anomal${newCount === 1 ? 'y' : 'ies'}`;
+              badge.style.borderColor = '#ef4444';
+              badge.style.color = '#ef4444';
+            }
+          }
+        }
         document.getElementById('statTotal').textContent = totalPlayed.toLocaleString();
         document.getElementById('statAnom').textContent  = totalAnomalies.toLocaleString();
       };
@@ -1203,6 +1240,9 @@
       }
 
       if (!allData) return;
+
+      // Rebuild dropdown to toggle text style (show/hide anomaly counts)
+      populateFeatureDropdown();
 
       if (liveMode) {
         startLive();

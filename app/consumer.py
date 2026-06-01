@@ -64,6 +64,22 @@ ae_single_thr     = KB_AUTOENCODER.get("meta", {}).get("single_threshold", None)
 # single: feature → ordered list (her feature için ayrı liste)
 ae_single_by_feat = KB_AUTOENCODER.get("single", {})
 
+# Map timestamp to frame index (0 to 3222) in the chronological multiple list
+ae_time_to_frame = {row.get("timestamp"): idx for idx, row in enumerate(ae_multiple_list) if row.get("timestamp")}
+
+# Pre-map single anomalies to their actual frame index using timestamp mapping
+ae_single_by_frame_and_feat = {}
+for feat, items in ae_single_by_feat.items():
+    ae_single_by_frame_and_feat[feat] = {}
+    if isinstance(items, list):
+        for item in items:
+            ts = item.get("timestamp") or item.get("time") or ""
+            f_no = ae_time_to_frame.get(ts)
+            if f_no is None:
+                f_no = item.get("frame_no") or item.get("frame")
+            if f_no is not None:
+                ae_single_by_frame_and_feat[feat][f_no] = item
+
 
 def translate_to_english(text: str) -> str:
     if not text:
@@ -611,15 +627,15 @@ def run_torque_server() -> None:
                     # -----------------------------------------------
                     # AUTOENCODER injection (frame-index döngüsel eşleştirme)
                     # -----------------------------------------------
+                    ae_idx = pkt["frame_no"] % len(ae_multiple_list) if ae_multiple_list else pkt["frame_no"]
                     ae_row = get_ae_for_frame(pkt["frame_no"])
                     ae_score     = float(ae_row.get("error", 0))
                     ae_thr       = float(ae_row.get("threshold", ae_multiple_thr or 9.385))
-                    ae_is_anomaly = bool(ae_row.get("is_anomaly", ae_score > ae_thr))
+                    ae_raw_is_anomaly = bool(ae_row.get("is_anomaly", ae_score > ae_thr))
                     ae_root_cause = ae_row.get("root_cause", "")
 
                     pkt["ae_score"]      = round(ae_score, 4)
                     pkt["ae_threshold"]  = round(ae_thr, 4)
-                    pkt["ae_anomaly"]    = ae_is_anomaly
                     pkt["ae_root_cause"] = translate_to_english(ae_root_cause)
 
                     # Single Autoencoder torque anomaly check (events.html and events.log use this)
@@ -631,9 +647,9 @@ def run_torque_server() -> None:
 
                     for i in range(1, 7):
                         feat_name = f"TORQUE_A{i}"
-                        feat_list = ae_single_by_feat.get(feat_name, [])
-                        if feat_list:
-                            row = feat_list[pkt["frame_no"] % len(feat_list)]
+                        feat_dict = ae_single_by_frame_and_feat.get(feat_name, {})
+                        row = feat_dict.get(ae_idx)
+                        if row:
                             err = float(row.get("error", 0))
                             is_anom = bool(row.get("is_anomaly", False))
                             if is_anom:
@@ -667,7 +683,12 @@ def run_torque_server() -> None:
 
                     # COMBINED (any 2-of-3) and TRIPLE (3-of-3) model anomalies
                     pca_anom = bool(model_payload.get("pca_anomaly"))
-                    rf_anom = bool(model_payload.get("rf_anomaly"))
+                    # rf_payload contains the actual RF scores (scored separately from model_payload)
+                    rf_anom = bool(rf_payload.get("rf_anomaly"))
+                    
+                    # Update pkt["ae_anomaly"] and ae_is_anomaly to represent torque anomalies only
+                    pkt["ae_anomaly"] = ae_torque_is_anomaly
+                    ae_is_anomaly = ae_torque_is_anomaly
                     ae_anom = bool(ae_is_anomaly)
                     models_hit = [m for m, ok in (("PCA", pca_anom), ("AE", ae_anom), ("RF", rf_anom)) if ok]
                     worst_joint_combined = (
@@ -879,6 +900,33 @@ def rf_meta():
         content={"error": "graybox_rf_thresholds.json not found — run train_graybox_rf.py first"},
         status_code=404,
     )
+
+
+@app.get("/api/rf/results")
+def rf_results():
+    """Serve the pre-computed Random Forest anomaly results JSON."""
+    results_path = BASE_DIR / "artifacts" / "rf_results.json"
+    if results_path.exists():
+        try:
+            with open(results_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return JSONResponse(
+                content=data,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+            )
+        except Exception as e:
+            print("[rf] Error reading results JSON:", e)
+            return JSONResponse(
+                content={"error": str(e), "overall": [], "per_feature": {}},
+                status_code=500
+            )
+    else:
+        return JSONResponse(content={
+            "meta": {"note": "Run models/stats/export_rf_results.py to generate results"},
+            "overall": [],
+            "per_feature": {}
+        })
+
 
 
 # ---------------------------

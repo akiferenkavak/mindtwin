@@ -56,4 +56,6 @@ Write-Host "   Thermal     : http://localhost:8000/thermal"
 Write-Host "   Events      : http://localhost:8000/events"
 Write-Host "   Autoencoder : http://localhost:8000/autoencoder"
 Write-Host "   PCA & IForest: http://localhost:8000/pca"
+Write-Host "   Random Forest: http://localhost:8000/rf"
+
 

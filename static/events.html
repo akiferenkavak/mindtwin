@@ -339,8 +339,8 @@ input:checked + .slider-toggle::before { transform: translateX(20px); }
       <button class="method-tab all-tab active" data-method="all" id="tab-all">All</button>
       <button class="method-tab pca-tab" data-method="PCA" id="tab-pca">PCA</button>
       <button class="method-tab ae-tab" data-method="Autoencoder" id="tab-ae">Autoencoder</button>
-      <button class="method-tab comb-tab" data-method="Combined" id="tab-combined">Combined</button>
       <button class="method-tab rf-tab" data-method="RandomForest" id="tab-rf">Random Forest</button>
+      <button class="method-tab comb-tab" data-method="Combined" id="tab-combined">Combined</button>
     </div>
 
     <div id="modeInfo" class="mode-info" style="display:none;"></div>
@@ -400,6 +400,8 @@ function num2(x) { return (typeof x === 'number') ? x.toFixed(2) : '-'; }
 
 function fmtTime(iso) {
   if (!iso) return 'N/A';
+  const sec = extractSecond(iso);
+  if (sec) return sec;
   return iso.replace('T',' ').split('.')[0];
 }
 
@@ -466,30 +468,102 @@ function normalizeAutoencoderAnomaly(raw) {
   };
 }
 
+function normalizeRfAnomaly(raw, featureHint) {
+  // raw is an overall row from rf_results.json with is_anomaly=true
+  const index = raw.frame_no ?? raw.frame ?? null;
+  const timestamp = raw.timestamp ?? raw.time ?? null;
+  const ts = timestamp;
+  const secondKey = extractSecond(ts);
+
+  // Feature: use worst_joint (1-based int → "TORQUE_A{n}")
+  let feature = featureHint || null;
+  if (!feature) {
+    const wj = raw.worst_joint;
+    if (wj != null) feature = `TORQUE_A${wj}`;
+  }
+
+  const score = raw.max_residual ?? raw.score ?? null;
+  const threshold = raw.threshold ?? null;
+  const severityRatio = (score != null && threshold != null && threshold > 0)
+    ? score / threshold
+    : (raw.severity_ratio ?? null);
+
+  return {
+    method: 'RandomForest',
+    feature: feature || 'Unknown',
+    frame: index,
+    timestamp: ts || 'N/A',
+    secondKey,
+    score,
+    threshold,
+    severityRatio,
+    worstJoint: raw.worst_joint ?? null,
+    anomalyJoints: raw.anomaly_joints ?? [],
+    explanation: raw.explanation ?? null,
+    raw
+  };
+}
+
 /**
- * Build Combined list: same HH:mm:ss AND same feature.
+ * Build Combined list: same HH:mm:ss AND same feature, across PCA+AE+RF.
+ * Returns combined entries where at least 2 models agree.
  */
-function createCombinedAnomalies(pcaList, aeList) {
+function createCombinedAnomalies(pcaList, aeList, rfList) {
+  rfList = rfList || [];
   const combined = [];
-  for (const pca of pcaList) {
-    if (!pca.secondKey || !pca.feature || pca.feature === 'Unknown') continue;
-    for (const ae of aeList) {
-      if (!ae.secondKey || !ae.feature || ae.feature === 'Unknown') continue;
-      if (pca.secondKey === ae.secondKey && pca.feature === ae.feature) {
-        combined.push({
-          type: 'Combined',
-          time: pca.secondKey,
-          feature: pca.feature,
-          pcaAnomaly: pca,
-          autoencoderAnomaly: ae,
-          pcaScore: pca.score,
-          autoencoderScore: ae.score,
-          pcaFrame: pca.frame,
-          autoencoderFrame: ae.frame,
-          matchReason: 'same second and same feature'
-        });
-      }
-    }
+  // Build lookup maps keyed by secondKey|feature
+  const pcaMap = {};
+  for (const a of pcaList) {
+    if (!a.secondKey || !a.feature || a.feature === 'Unknown') continue;
+    const k = `${a.secondKey}|${a.feature}`;
+    pcaMap[k] = a;
+  }
+  const aeMap = {};
+  for (const a of aeList) {
+    if (!a.secondKey || !a.feature || a.feature === 'Unknown') continue;
+    const k = `${a.secondKey}|${a.feature}`;
+    aeMap[k] = a;
+  }
+  const rfMap = {};
+  for (const a of rfList) {
+    if (!a.secondKey || !a.feature || a.feature === 'Unknown') continue;
+    const k = `${a.secondKey}|${a.feature}`;
+    rfMap[k] = a;
+  }
+
+  // Collect all unique keys
+  const allKeys = new Set([
+    ...Object.keys(pcaMap),
+    ...Object.keys(aeMap),
+    ...Object.keys(rfMap)
+  ]);
+
+  for (const key of allKeys) {
+    const hasPca = !!pcaMap[key];
+    const hasAe  = !!aeMap[key];
+    const hasRf  = !!rfMap[key];
+    const count  = (hasPca ? 1 : 0) + (hasAe ? 1 : 0) + (hasRf ? 1 : 0);
+    if (count < 2) continue;
+
+    const [secondKey, feature] = key.split('|');
+    const pFrame = pcaMap[key] ? pcaMap[key].frame : null;
+    const aFrame = aeMap[key] ? aeMap[key].frame : null;
+    const rFrame = rfMap[key] ? rfMap[key].frame : null;
+    const maxFrame = Math.max(pFrame || 0, aFrame || 0, rFrame || 0);
+
+    combined.push({
+      type: count === 3 ? 'TripleCombined' : 'Combined',
+      time: secondKey,
+      feature,
+      frame: maxFrame || null,
+      pcaAnomaly: pcaMap[key] || null,
+      autoencoderAnomaly: aeMap[key] || null,
+      rfAnomaly: rfMap[key] || null,
+      pcaScore: pcaMap[key] ? pcaMap[key].score : null,
+      autoencoderScore: aeMap[key] ? aeMap[key].score : null,
+      rfScore: rfMap[key] ? rfMap[key].score : null,
+      matchReason: `${count}-model agreement at same second+feature`
+    });
   }
   return combined;
 }
@@ -512,6 +586,7 @@ let cachedEvents= [];   // live mode: all events from /errors
 // Static mode data
 let staticPcaAnomalies  = [];   // normalized PCA anomalies
 let staticAeAnomalies   = [];   // normalized AE anomalies
+let staticRfAnomalies   = [];   // normalized RF anomalies
 let staticCombined      = [];   // derived combined
 
 let activeMethod = 'all';   // 'all' | 'PCA' | 'Autoencoder' | 'Combined' | 'RandomForest'
@@ -536,12 +611,27 @@ function fmtMetaLive(type, meta = {}) {
     return `Score: ${num4(meta.score)} (thr: ${num4(meta.threshold)}) | Joint: A${meta.worst_joint || '?'} | Frame: ${meta.frame_no}`;
   }
   if (type === 'TORQUE_COMBINED') {
+    const modelsList = Array.isArray(meta.models) ? meta.models : ['PCA', 'AE'];
+    const chips = modelsList.map(m => {
+      const cls = m === 'PCA' ? 'pca' : m === 'AE' ? 'ae' : m === 'RF' ? 'rf' : 'live-chip';
+      return `<span class="chip ${cls}" style="margin-top:0.35rem">${m}</span>`;
+    }).join(' ');
     return `
-      Joint: A${meta.worst_joint || '?'} | Frame: ${meta.frame_no}
+      ${chips} | Joint: A${meta.worst_joint || '?'} | Frame: ${meta.frame_no}
       <br>
-      <span class="chip pca" style="margin-top:0.35rem">PCA</span> Score: ${meta.pca_score != null ? num4(meta.pca_score) : 'N/A'}
+      ${meta.pca_score != null ? `<span class="chip pca">PCA</span> Score: ${num4(meta.pca_score)} &nbsp;` : ''}
+      ${meta.ae_score != null  ? `<span class="chip ae">AE</span> Score: ${num4(meta.ae_score)} &nbsp;`   : ''}
+      ${meta.rf_max_residual != null ? `<span class="chip rf">RF</span> Residual: ${num4(meta.rf_max_residual)}` : ''}
+    `;
+  }
+  if (type === 'TORQUE_TRIPLE_COMBINED') {
+    const modelsList = Array.isArray(meta.models) ? meta.models.join(' + ') : 'PCA + AE + RF';
+    return `
+      ⚡ Triple: ${modelsList} | Joint: A${meta.worst_joint || '?'} | Frame: ${meta.frame_no}
       <br>
-      <span class="chip ae" style="margin-top:0.2rem">AE</span> Score: ${meta.ae_score != null ? num4(meta.ae_score) : 'N/A'}
+      ${meta.pca_score != null ? `<span class="chip pca">PCA</span> Score: ${num4(meta.pca_score)} &nbsp;` : ''}
+      ${meta.ae_score != null  ? `<span class="chip ae">AE</span> Score: ${num4(meta.ae_score)} &nbsp;`   : ''}
+      ${meta.rf_max_residual != null ? `<span class="chip rf">RF</span> Residual: ${num4(meta.rf_max_residual)}` : ''}
     `;
   }
   if (type === 'TORQUE_TRIPLE_THREAT') {
@@ -598,11 +688,12 @@ function renderLiveEvents(data) {
     if (e.severity === 'CRITICAL') criticalCount++;
 
     let extraClass = e.severity || 'WARNING';
-    if (e.type === 'TORQUE_PCA')         extraClass = 'PCA';
-    if (e.type === 'TORQUE_AUTOENCODER') extraClass = 'AUTOENCODER';
-    if (e.type === 'TORQUE_COMBINED')    extraClass = 'COMBINED';
-    if (e.type === 'TORQUE_RF')          extraClass = 'RF';
-    if (e.type === 'TORQUE_TRIPLE_THREAT') extraClass = 'TRIPLE_THREAT';
+    if (e.type === 'TORQUE_PCA')              extraClass = 'PCA';
+    if (e.type === 'TORQUE_AUTOENCODER')      extraClass = 'AUTOENCODER';
+    if (e.type === 'TORQUE_COMBINED')         extraClass = 'COMBINED';
+    if (e.type === 'TORQUE_TRIPLE_COMBINED')  extraClass = 'COMBINED';
+    if (e.type === 'TORQUE_RF')               extraClass = 'RF';
+    if (e.type === 'TORQUE_TRIPLE_THREAT')    extraClass = 'TRIPLE_THREAT';
 
     let sevBadge = '';
     if (e.severity === 'CRITICAL') {
@@ -612,10 +703,11 @@ function renderLiveEvents(data) {
     }
 
     let typeChip = `<span class="chip live-chip">${e.type}</span>`;
-    if (e.type === 'TORQUE_PCA')          typeChip = `<span class="chip pca">PCA</span>`;
-    if (e.type === 'TORQUE_AUTOENCODER')  typeChip = `<span class="chip ae">AE</span>`;
-    if (e.type === 'TORQUE_COMBINED')     typeChip = `<span class="chip comb">COMBINED</span>`;
-    if (e.type === 'TORQUE_RF')           typeChip = `<span class="chip rf">RF</span>`;
+    if (e.type === 'TORQUE_PCA')              typeChip = `<span class="chip pca">PCA</span>`;
+    if (e.type === 'TORQUE_AUTOENCODER')      typeChip = `<span class="chip ae">AE</span>`;
+    if (e.type === 'TORQUE_COMBINED')         typeChip = `<span class="chip comb">COMBINED</span>`;
+    if (e.type === 'TORQUE_TRIPLE_COMBINED')  typeChip = `<span class="chip comb">TRIPLE</span>`;
+    if (e.type === 'TORQUE_RF')               typeChip = `<span class="chip rf">RF</span>`;
 
     html += `
       <div class="event ${extraClass}">
@@ -642,27 +734,21 @@ function renderLiveEvents(data) {
    STATIC MODE — render from result files
 ═══════════════════════════════════════════════════════════════════ */
 
-/* Sort anomaly array by timestamp descending (newest first)
- * Uses secondKey (HH:mm:ss) as primary sort key — works for both
- * full-date PCA timestamps and time-only AE timestamps. */
-function sortByTimestampDesc(arr) {
+/* Sort anomaly array by frame number descending (highest first) */
+function sortByFrameDesc(arr) {
   return arr.slice().sort((a, b) => {
-    const ka = a.secondKey || '';
-    const kb = b.secondKey || '';
-    if (ka && kb) return kb.localeCompare(ka);
-    // Fallback: full timestamp string
-    const ta = a.timestamp || a.time || '';
-    const tb = b.timestamp || b.time || '';
-    return String(tb).localeCompare(String(ta));
+    const fa = a.frame ?? 0;
+    const fb = b.frame ?? 0;
+    return fb - fa;
   });
 }
 
-/* Sort combined list by time string (HH:mm:ss) descending */
+/* Sort combined list by frame number descending */
 function sortCombinedDesc(arr) {
   return arr.slice().sort((a, b) => {
-    const ta = a.time || '';
-    const tb = b.time || '';
-    return String(tb).localeCompare(String(ta));
+    const fa = a.frame ?? 0;
+    const fb = b.frame ?? 0;
+    return fb - fa;
   });
 }
 
@@ -673,39 +759,42 @@ function renderStaticEvents() {
   let html  = '';
 
   if (method === 'all') {
-    statusDiv.textContent = `Results loaded — PCA Only: ${staticPcaAnomalies.length} | Autoencoder Only: ${staticAeAnomalies.length} | Combined: ${staticCombined.length}`;
-    // Merge PCA + AE into one unified sorted list (newest first by HH:mm:ss)
+    statusDiv.textContent = `Results loaded — PCA: ${staticPcaAnomalies.length} | AE: ${staticAeAnomalies.length} | RF: ${staticRfAnomalies.length} | Combined: ${staticCombined.length}`;
+    // Merge PCA + AE + RF into one unified sorted list (highest frame first)
     const merged = [
-      ...staticPcaAnomalies.map(a => ({ _key: a.secondKey || '', card: buildPcaCard(a) })),
-      ...staticAeAnomalies.map(a  => ({ _key: a.secondKey || '', card: buildAeCard(a) })),
-    ].sort((a, b) => b._key.localeCompare(a._key));
+      ...staticPcaAnomalies.map(a => ({ _frame: a.frame ?? 0, card: buildPcaCard(a) })),
+      ...staticAeAnomalies.map(a  => ({ _frame: a.frame ?? 0, card: buildAeCard(a) })),
+      ...staticRfAnomalies.map(a  => ({ _frame: a.frame ?? 0, card: buildRfCard(a) })),
+    ].sort((a, b) => b._frame - a._frame);
 
     const combSorted = sortCombinedDesc(staticCombined);
 
-    html = merged.map(x => x.card).join('') + (combSorted.length ? '<div style="margin-top:1.5rem;border-top:1px solid #2d2d2d;padding-top:1rem;color:#6b7280;font-size:0.8rem;margin-bottom:0.75rem;">── Combined Anomalies (same second + same feature) ──</div>' + combSorted.map(c => buildCombinedCard(c)).join('') : '');
+    html = merged.map(x => x.card).join('') + (combSorted.length ? '<div style="margin-top:1.5rem;border-top:1px solid #2d2d2d;padding-top:1rem;color:#6b7280;font-size:0.8rem;margin-bottom:0.75rem;">── Combined Anomalies (same second + same feature, 2+ models) ──</div>' + combSorted.map(c => buildCombinedCard(c)).join('') : '');
     items = merged.length + combSorted.length;
 
   } else if (method === 'PCA') {
     statusDiv.textContent = `Results loaded — PCA Only: ${staticPcaAnomalies.length} anomalies`;
-    const sorted = sortByTimestampDesc(staticPcaAnomalies);
+    const sorted = sortByFrameDesc(staticPcaAnomalies);
     html  = sorted.map(a => buildPcaCard(a)).join('');
     items = sorted.length;
 
   } else if (method === 'Autoencoder') {
     statusDiv.textContent = `Results loaded — Autoencoder Only: ${staticAeAnomalies.length} anomalies`;
-    const sorted = sortByTimestampDesc(staticAeAnomalies);
+    const sorted = sortByFrameDesc(staticAeAnomalies);
     html  = sorted.map(a => buildAeCard(a)).join('');
     items = sorted.length;
 
+  } else if (method === 'RandomForest') {
+    statusDiv.textContent = `Results loaded — Random Forest: ${staticRfAnomalies.length} anomalies`;
+    const sorted = sortByFrameDesc(staticRfAnomalies);
+    html  = sorted.map(a => buildRfCard(a)).join('');
+    items = sorted.length;
+
   } else if (method === 'Combined') {
-    statusDiv.textContent = `Results loaded — Combined: ${staticCombined.length} matches`;
+    statusDiv.textContent = `Results loaded — Combined (2+ models): ${staticCombined.length} matches`;
     const sorted = sortCombinedDesc(staticCombined);
     html  = sorted.map(c => buildCombinedCard(c)).join('');
     items = sorted.length;
-  } else if (method === 'RandomForest') {
-    statusDiv.textContent = `Random Forest anomalies are only available in Live Mode (from /errors).`;
-    html = '';
-    items = 0;
   }
 
   eventsDiv.innerHTML = html || `<div class="meta">No anomalies matching the filter.</div>`;
@@ -763,27 +852,47 @@ function buildAeCard(a) {
     </div>`;
 }
 
+function buildRfCard(a) {
+  const cls = sev(a.severityRatio);
+  const scoreStr = a.score     != null ? num4(a.score)         : 'N/A';
+  const thrStr   = a.threshold != null ? num4(a.threshold)     : 'N/A';
+  const ratioStr = a.severityRatio != null ? num2(a.severityRatio) : 'N/A';
+  const jointStr = a.feature ? a.feature.replace('TORQUE_', '') : '?';
+  const frameStr = a.frame   != null ? ` | Frame: ${a.frame}` : '';
+
+  return `
+    <div class="event RF">
+      <strong>[${fmtTime(a.timestamp)}]</strong>
+      <span class="chip rf">RF</span>
+      <span class="badge ${cls}" style="background:${cls === 'CRITICAL' ? '#dc2626' : '#d97706'};color:white;padding:2px 6px;border-radius:4px;font-size:0.75rem;font-weight:bold;margin-left:0.5rem;display:inline-block;vertical-align:middle;">${cls}</span>
+      <span style="color:#ddd;margin-left:0.35rem">Random Forest Residual: ${jointStr}</span>
+      <div class="meta">
+        Residual: ${scoreStr} (thr: ${thrStr}) | Joint: ${jointStr}${frameStr}
+        ${a.severityRatio ? ` | Severity: ${ratioStr}×` : ''}
+        ${a.explanation ? `<br><span style="color:#6b7280">${a.explanation}</span>` : ''}
+      </div>
+    </div>`;
+}
+
 function buildCombinedCard(c) {
   const pca = c.pcaAnomaly;
   const ae  = c.autoencoderAnomaly;
+  const rf  = c.rfAnomaly;
   const jointStr = c.feature ? c.feature.replace('TORQUE_', '') : '?';
+  const isTriple = c.type === 'TripleCombined';
+  const label = isTriple ? 'TRIPLE ANOMALY (PCA + AE + RF)' : 'COMBINED ANOMALY';
 
   return `
     <div class="event COMBINED">
       <strong>[${c.time}]</strong>
-      <span class="chip comb">COMBINED</span>
+      <span class="chip comb">${isTriple ? 'TRIPLE' : 'COMBINED'}</span>
       <span class="badge CRITICAL" style="background:#dc2626;color:white;padding:2px 6px;border-radius:4px;font-size:0.75rem;font-weight:bold;margin-left:0.5rem;display:inline-block;vertical-align:middle;">CRITICAL</span>
-      <span style="color:#ddd;margin-left:0.35rem">DOUBLE ANOMALY (PCA + AE): ${jointStr}</span>
+      <span style="color:#ddd;margin-left:0.35rem">${label}: ${jointStr}</span>
       <div class="meta">
         Joint: ${jointStr} | Time: ${c.time}
-        <br>
-        <span class="chip pca" style="margin-top:0.35rem">PCA</span> Score: ${c.pcaScore != null ? num4(c.pcaScore) : 'N/A'}
-        ${pca && pca.threshold ? ` (thr: ${num4(pca.threshold)})` : ''}
-        ${pca && pca.severityRatio ? ` | Severity: ${num2(pca.severityRatio)}×` : ''}
-        <br>
-        <span class="chip ae" style="margin-top:0.2rem">AE</span> Score: ${c.autoencoderScore != null ? num4(c.autoencoderScore) : 'N/A'}
-        ${ae && ae.threshold ? ` (thr: ${num4(ae.threshold)})` : ''}
-        ${ae && ae.severityRatio ? ` | Severity: ${num2(ae.severityRatio)}×` : ''}
+        ${pca ? `<br><span class="chip pca" style="margin-top:0.35rem">PCA</span> Score: ${c.pcaScore != null ? num4(c.pcaScore) : 'N/A'}${pca.threshold ? ` (thr: ${num4(pca.threshold)})` : ''}${pca.severityRatio ? ` | Severity: ${num2(pca.severityRatio)}×` : ''}` : ''}
+        ${ae  ? `<br><span class="chip ae" style="margin-top:0.2rem">AE</span> Score: ${c.autoencoderScore != null ? num4(c.autoencoderScore) : 'N/A'}${ae.threshold ? ` (thr: ${num4(ae.threshold)})` : ''}${ae.severityRatio ? ` | Severity: ${num2(ae.severityRatio)}×` : ''}` : ''}
+        ${rf  ? `<br><span class="chip rf" style="margin-top:0.2rem">RF</span> Residual: ${c.rfScore != null ? num4(c.rfScore) : 'N/A'}${rf.threshold ? ` (thr: ${num4(rf.threshold)})` : ''}${rf.severityRatio ? ` | Severity: ${num2(rf.severityRatio)}×` : ''}` : ''}
       </div>
     </div>`;
 }
@@ -816,6 +925,14 @@ async function loadStaticResults() {
     const aeRes = await fetch('/api/autoencoder/results', { cache: 'no-store' });
     const aeJson = aeRes.ok ? await aeRes.json() : {};
 
+    // Build time-to-frame mapping from multiple list
+    const aeTimeToFrame = {};
+    if (Array.isArray(aeJson.multiple)) {
+      aeJson.multiple.forEach((row, idx) => {
+        if (row.timestamp) aeTimeToFrame[row.timestamp] = idx;
+      });
+    }
+
     staticAeAnomalies = [];
     const aeSingle = aeJson.single || {};
     for (const [feat, items] of Object.entries(aeSingle)) {
@@ -823,27 +940,76 @@ async function loadStaticResults() {
       const arr = Array.isArray(items) ? items : [];
       for (const raw of arr) {
         if (raw.is_anomaly) {
-          staticAeAnomalies.push(normalizeAutoencoderAnomaly(raw));
+          const norm = normalizeAutoencoderAnomaly(raw);
+          if (norm.frame == null && norm.timestamp) {
+            norm.frame = aeTimeToFrame[norm.timestamp] ?? null;
+          }
+          staticAeAnomalies.push(norm);
         }
       }
     }
 
-    // 3. Build Combined
-    staticCombined = createCombinedAnomalies(staticPcaAnomalies, staticAeAnomalies);
+    // 3. Load Random Forest results
+    const rfRes = await fetch('/api/rf/results', { cache: 'no-store' });
+    const rfJson = rfRes.ok ? await rfRes.json() : {};
 
-    // 4. Remove combined from standalone arrays to avoid duplicates
-    const combinedKeys = new Set(staticCombined.map(c => c.time + '_' + c.feature));
-    staticPcaAnomalies = staticPcaAnomalies.filter(a => !combinedKeys.has(a.secondKey + '_' + a.feature));
-    staticAeAnomalies  = staticAeAnomalies.filter(a => !combinedKeys.has(a.secondKey + '_' + a.feature));
+    staticRfAnomalies = [];
+    const rfOverall = rfJson.overall || [];
+    for (const raw of rfOverall) {
+      if (!raw.is_anomaly) continue;
+      // Each RF overall row corresponds to all joints simultaneously;
+      // we create one entry per anomaly joint if anomaly_joints available,
+      // otherwise fall back to worst_joint.
+      const joints = Array.isArray(raw.anomaly_joints) && raw.anomaly_joints.length > 0
+        ? raw.anomaly_joints
+        : (raw.worst_joint != null ? [raw.worst_joint] : []);
+      if (joints.length === 0) {
+        staticRfAnomalies.push(normalizeRfAnomaly(raw, null));
+      } else {
+        for (const j of joints) {
+          staticRfAnomalies.push(normalizeRfAnomaly(raw, `TORQUE_A${j}`));
+        }
+      }
+    }
+    // Also check per_feature for RF (some formats store per-joint results there)
+    const rfPerFeature = rfJson.per_feature || {};
+    for (const [feat, items] of Object.entries(rfPerFeature)) {
+      if (!feat.startsWith('TORQUE_')) continue;
+      const arr = Array.isArray(items) ? items : [];
+      for (const raw of arr) {
+        if (raw.is_anomaly) {
+          // Only add if not already covered from overall
+          staticRfAnomalies.push(normalizeRfAnomaly(raw, feat));
+        }
+      }
+    }
+    // Deduplicate RF by frame+feature
+    const rfSeen = new Set();
+    staticRfAnomalies = staticRfAnomalies.filter(a => {
+      const k = `${a.frame}|${a.feature}`;
+      if (rfSeen.has(k)) return false;
+      rfSeen.add(k);
+      return true;
+    });
+
+    // 4. Build Combined (2+ model agreement)
+    staticCombined = createCombinedAnomalies(staticPcaAnomalies, staticAeAnomalies, staticRfAnomalies);
+
+    // 5. Remove combined from standalone arrays to avoid duplicates in 'all' view
+    const combinedKeys = new Set(staticCombined.map(c => c.time + '|' + c.feature));
+    staticPcaAnomalies = staticPcaAnomalies.filter(a => !combinedKeys.has((a.secondKey || '') + '|' + a.feature));
+    staticAeAnomalies  = staticAeAnomalies.filter(a =>  !combinedKeys.has((a.secondKey || '') + '|' + a.feature));
+    staticRfAnomalies  = staticRfAnomalies.filter(a =>  !combinedKeys.has((a.secondKey || '') + '|' + a.feature));
 
     statusDiv.style.color = '#86efac';
 
     modeInfoDiv.style.display = 'block';
     modeInfoDiv.innerHTML =
       `📊 Static mode: showing pre-computed results. ` +
-      `PCA anomalies from <code>pca_results.json → per_feature</code> | ` +
-      `AE anomalies from <code>autoencoder_results.json → single</code>. ` +
-      `Combined = same HH:mm:ss + same feature.`;
+      `PCA from <code>pca_results.json</code> | ` +
+      `AE from <code>autoencoder_results.json</code> | ` +
+      `RF from <code>rf_results.json</code>. ` +
+      `Combined = same HH:mm:ss + same feature (2+ models).`;
 
     renderStaticEvents();
 

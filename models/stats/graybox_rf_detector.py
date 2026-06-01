@@ -54,14 +54,24 @@ class GrayboxRFDetector:
         urdf_path   = meta.get("urdf_path")
 
         if use_inv_dyn:
-            # URDF yolunu doğrula; bulunamazsa uyarı ver ama çalışmaya devam et
+            # URDF yolunu doğrula; bulunamazsa projede ara ve otomatik düzelt
             if urdf_path and not Path(urdf_path).exists():
-                print(
-                    f"[graybox_rf] UYARI: URDF bulunamadı ({urdf_path})\n"
-                    "  Model ters dinamiksiz (12-özellik) modunda çalışacak.\n"
-                    "  Doğru yolu artifacts/graybox_rf_thresholds.json'da güncelleyin."
-                )
-                use_inv_dyn = False
+                proj_urdf = Path(threshold_path).resolve().parent.parent / "robot.urdf"
+                if proj_urdf.exists():
+                    urdf_path = str(proj_urdf)
+                    print(f"[graybox_rf] URDF otomatik düzeltildi: {urdf_path}")
+                else:
+                    cwd_urdf = Path("robot.urdf").resolve()
+                    if cwd_urdf.exists():
+                        urdf_path = str(cwd_urdf)
+                        print(f"[graybox_rf] URDF otomatik düzeltildi (CWD): {urdf_path}")
+                    else:
+                        print(
+                            f"[graybox_rf] UYARI: URDF bulunamadı ({urdf_path})\n"
+                            "  Model ters dinamiksiz (12-özellik) modunda çalışacak.\n"
+                            "  Doğru yolu artifacts/graybox_rf_thresholds.json'da güncelleyin."
+                        )
+                        use_inv_dyn = False
 
         return cls(
             models=models,

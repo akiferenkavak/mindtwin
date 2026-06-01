@@ -30,6 +30,7 @@ def inject_anomalies(
     spike_factor: float,
     noise_std: float,
     seed: int,
+    fixed_joint: int = None,
 ):
     if inject_ratio <= 0:
         return X, np.zeros(len(X), dtype=bool), None
@@ -51,7 +52,11 @@ def inject_anomalies(
     for i in range(start, end):
         x = X_inj[i].copy()
         dim = x.shape[0]
-        j = i % dim
+        # fixed_joint (1-based) verilirse hep o ekseni boz; yoksa eksenler arasında dön
+        if fixed_joint is not None:
+            j = (fixed_joint - 1) % dim
+        else:
+            j = i % dim
         k = (j + 1) % dim
 
         if method in ("swap", "mix"):
@@ -74,6 +79,7 @@ def inject_anomalies(
         "spike_factor": spike_factor,
         "noise_std": noise_std,
         "seed": seed,
+        "fixed_joint": fixed_joint,
     }
 
     return X_inj, mask, info
@@ -92,6 +98,8 @@ def main():
     parser.add_argument("--spike-factor", type=float, default=1.0)
     parser.add_argument("--noise-std", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--joint", type=int, default=None,
+                        help="Sabit eksen (1-6). Verilirse hep o tork ekseni bozulur; yoksa eksenler arasında dönülür.")
     args = parser.parse_args()
 
     rows = load_csv_rows(args.csv)
@@ -118,6 +126,7 @@ def main():
         spike_factor=args.spike_factor,
         noise_std=args.noise_std,
         seed=args.seed,
+        fixed_joint=args.joint,
     )
 
     # Apply injected values back to rows

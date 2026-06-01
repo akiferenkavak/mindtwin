@@ -37,6 +37,11 @@ class FramePacket:
 def pick_csv():
     import os
     possible_paths = [
+        # Canonical injected 900s dataset (15:16-15:31) — keeps live ON aligned
+        # with the static RF / PCA / AE results.
+        "data/kuka_log_900scnd_injected.csv",
+        "../data/kuka_log_900scnd_injected.csv",
+        # Legacy canta dataset (14:33-14:43) — fallback only.
         "data/kuka_log600_scnd_20hz(canta)_injected.csv",
         "../data/kuka_log600_scnd_20hz(canta)_injected.csv",
         "data/kuka_log600_scnd_20hz(canta).csv",
@@ -100,8 +105,18 @@ def main():
     print("[thermal] Using temp columns:", temp_cols)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((HOST, PORT))
-    print("[thermal] connected to consumer")
+    for _attempt in range(10):
+        try:
+            sock.connect((HOST, PORT))
+            print(f"[thermal] Consumer'a bağlandı ({HOST}:{PORT})")
+            break
+        except OSError:
+            if _attempt < 9:
+                print(f"[thermal] Bağlantı bekleniyor ({_attempt+1}/10) — 3s sonra tekrar...")
+                time.sleep(3)
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            else:
+                raise RuntimeError(f"[thermal] Consumer'a bağlanılamadı ({HOST}:{PORT}). Consumer çalışıyor mu?")
 
     frame = 0
     for r in rows:

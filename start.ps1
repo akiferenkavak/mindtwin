@@ -4,7 +4,7 @@
 #   NOT: Torque producer başladıktan sonra CSV seçim penceresi açılır.
 # ─────────────────────────────────────────────────────────────────
 
-$ROOT = "C:\Users\yusuf\OneDrive\Desktop\SDP Code\mindtwin"
+$ROOT = "C:\Users\gitar\Desktop\KUKA_Proje\mindtwin-Final-additions"
 Set-Location $ROOT
 
 # 1) Sanal ortam veya Sistem Python seçimi
@@ -30,7 +30,7 @@ Write-Host "[3/5] Backend baslatiliyor (port 8000)..." -ForegroundColor Cyan
 Start-Process powershell -ArgumentList "-NoExit","-Command",
     "Set-Location '$ROOT'; & '$PY' app\consumer.py"
 
-Start-Sleep -Seconds 2
+Start-Sleep -Seconds 15
 
 # 5) Thermal producer
 Write-Host "[4/5] Thermal producer baslatiliyor..." -ForegroundColor Cyan
@@ -56,4 +56,6 @@ Write-Host "   Thermal     : http://localhost:8000/thermal"
 Write-Host "   Events      : http://localhost:8000/events"
 Write-Host "   Autoencoder : http://localhost:8000/autoencoder"
 Write-Host "   PCA & IForest: http://localhost:8000/pca"
+Write-Host "   Random Forest: http://localhost:8000/rf"
+
 

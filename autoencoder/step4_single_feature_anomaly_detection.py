@@ -16,7 +16,7 @@ TIMESTAMP_COL = "timestamp"
 SEP = ";"
 
 TEST_FILES = [
-    "testdata3.csv",
+    "kuka_log_900scnd_injected.csv",
 ]
 
 

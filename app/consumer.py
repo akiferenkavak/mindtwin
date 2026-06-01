@@ -15,6 +15,7 @@ from pathlib import Path
 import google.generativeai as genai
 from dotenv import load_dotenv
 from fastapi import Request
+from fastapi.middleware.gzip import GZipMiddleware
 from collections import deque
 from typing import Optional
 
@@ -62,6 +63,22 @@ ae_single_thr     = KB_AUTOENCODER.get("meta", {}).get("single_threshold", None)
 
 # single: feature → ordered list (her feature için ayrı liste)
 ae_single_by_feat = KB_AUTOENCODER.get("single", {})
+
+# Map timestamp to frame index (0 to 3222) in the chronological multiple list
+ae_time_to_frame = {row.get("timestamp"): idx for idx, row in enumerate(ae_multiple_list) if row.get("timestamp")}
+
+# Pre-map single anomalies to their actual frame index using timestamp mapping
+ae_single_by_frame_and_feat = {}
+for feat, items in ae_single_by_feat.items():
+    ae_single_by_frame_and_feat[feat] = {}
+    if isinstance(items, list):
+        for item in items:
+            ts = item.get("timestamp") or item.get("time") or ""
+            f_no = ae_time_to_frame.get(ts)
+            if f_no is None:
+                f_no = item.get("frame_no") or item.get("frame")
+            if f_no is not None:
+                ae_single_by_frame_and_feat[feat][f_no] = item
 
 
 def translate_to_english(text: str) -> str:
@@ -205,6 +222,7 @@ except Exception as e:
 # TORQUE MODEL MANAGER (PCA + IForest)
 # ---------------------------
 torque_models = None
+_rf_reload_attempted = False
 if TorqueModelManager is not None:
     try:
         torque_models = TorqueModelManager.load(artifacts_dir=str(BASE_DIR / "artifacts"))
@@ -212,7 +230,8 @@ if TorqueModelManager is not None:
             print(
                 "[torque] model manager loaded:"
                 f" PCA={'yes' if torque_models.pca else 'no'},"
-                f" IForest={'yes' if torque_models.iforest else 'no'}"
+                f" IForest={'yes' if torque_models.iforest else 'no'},"
+                f" RF={'yes' if getattr(torque_models, 'graybox_rf', None) else 'no'}"
             )
         else:
             print("[torque] model manager: artifacts not found, skipping")
@@ -380,7 +399,10 @@ def log_torque_model_event(
     extra_meta: dict = None,
     severity: str = None
 ) -> None:
-    key = (event_type,)
+    key_joint = None
+    if extra_meta and "worst_joint" in extra_meta:
+        key_joint = extra_meta.get("worst_joint")
+    key = (event_type, key_joint)
     now = time.time()
     if key in last_error_time and now - last_error_time[key] <= MODEL_EVENT_COOLDOWN:
         return
@@ -401,15 +423,20 @@ def log_torque_model_event(
     # Build concise human-readable message
     worst = meta.get("worst_joint", "?")
     if event_type == "TORQUE_AUTOENCODER":
-        msg = f"Autoencoder Torque Hatası: A{worst}"
+        msg = f"Autoencoder Torque Error: A{worst}"
     elif event_type == "TORQUE_PCA":
-        msg = f"PCA Torque Hatası: A{worst}"
-    elif event_type == "TORQUE_IFOREST":
-        msg = f"IForest Torque Hatası: A{worst}"
+        msg = f"PCA Torque Error: A{worst}"
+    elif event_type == "TORQUE_COMBINED":
+        models = meta.get("models") or ["PCA", "AE"]
+        msg = f"DOUBLE ANOMALY ({' + '.join(models)}): A{worst}"
+    elif event_type == "TORQUE_TRIPLE_COMBINED":
+        msg = f"TRIPLE ANOMALY (PCA + AE + RF): A{worst}"
+    elif event_type == "TORQUE_RF":
+        msg = f"Random Forest Torque Residual: A{worst}"
     else:
         msg = f"{label} anomaly score exceeded threshold"
         if "worst_joint" in meta:
-            msg += f" | En yüksek hata: A{meta['worst_joint']}"
+            msg += f" | Highest error: A{meta['worst_joint']}"
 
     event = {
         "timestamp": ts,
@@ -428,6 +455,8 @@ def log_torque_model_event(
 
 def run_torque_server() -> None:
     global latest_torque
+    global torque_models
+    global _rf_reload_attempted
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -456,6 +485,38 @@ def run_torque_server() -> None:
                         continue
 
                     pkt = json.loads(line.decode("utf-8"))
+                    # Normalize torque input per detector scale if raw torque + producer scale are provided.
+                    # This keeps PCA/IForest and RF aligned even if the producer calibrates with a different CSV.
+                    torque_raw = pkt.get("torque_actual_raw")
+                    producer_scale = pkt.get("producer_scale")
+                    if (
+                        torque_models is not None
+                        and torque_raw is not None
+                        and producer_scale
+                        and isinstance(torque_raw, list)
+                    ):
+                        try:
+                            scale_f = float(producer_scale) if float(producer_scale) != 0 else None
+                            if scale_f:
+                                pca_scale = None
+                                try:
+                                    pca_scale = float((torque_models.pca.meta or {}).get("producer_scale") or 0) if torque_models.pca else None
+                                except Exception:
+                                    pca_scale = None
+                                rf_scale = None
+                                try:
+                                    rf_scale = float(getattr(getattr(torque_models, "graybox_rf", None), "producer_scale", 0) or 0)
+                                except Exception:
+                                    rf_scale = None
+
+                                if pca_scale and pca_scale > 0:
+                                    pkt["torque_actual"] = [(float(v) / pca_scale) for v in torque_raw]
+                                # Always keep the producer-normalized values available for RF and other consumers.
+                                pkt["torque_actual_producer"] = [(float(v) / scale_f) for v in torque_raw]
+                                if rf_scale and rf_scale > 0:
+                                    pkt["torque_actual_rf"] = [(float(v) / rf_scale) for v in torque_raw]
+                        except Exception:
+                            pass
                     ideal = pkt.get("torque_ideal")
                     if torque_models is not None and torque_models.pca is not None:
                         try:
@@ -475,44 +536,32 @@ def run_torque_server() -> None:
                     pkt["diffs"] = diffs
                     pkt["anomaly"] = any(flags)
 
-                    if pkt["anomaly"]:
-                        for j, d in enumerate(pkt["diffs"]):
-                            if d > TORQUE_THRESHOLD:
-                                key = ("TORQUE", j + 1)
-                                now = time.time()
-
-                                if key not in last_error_time or now - last_error_time[key] > ERROR_COOLDOWN:
-                                    if d > 0.6:
-                                        severity = "CRITICAL"
-                                    elif d > 0.3:
-                                        severity = "WARNING"
-                                    else:
-                                        severity = "INFO"
-
-                                    event = {
-                                        "timestamp": pkt["timestamp"],
-                                        "type": "TORQUE",
-                                        "severity": severity,
-                                        "message": f"Joint {j+1} torque exceeded threshold",
-                                        "meta": {
-                                            "joint": j + 1,
-                                            "diff": d,
-                                            "threshold": TORQUE_THRESHOLD,
-                                            "frame_no": pkt["frame_no"],
-                                        },
-                                    }
-
-                                    error_log.append(event)
-                                    with open(EVENTS_LOG_FILE, "a", encoding="utf-8") as f:
-                                        f.write(json.dumps(event) + "\n")
-
-                                    last_error_time[key] = now
+                    # Raw torque threshold checks removed as requested
 
                     # PCA + IForest scores
                     model_payload = {}
                     if torque_models is not None and torque_models.enabled():
                         try:
-                            model_payload = torque_models.score(pkt["torque_actual"])
+                            if (
+                                not _rf_reload_attempted
+                                and pkt.get("q") is not None
+                                and pkt.get("q_dot") is not None
+                                and getattr(torque_models, "graybox_rf", None) is None
+                            ):
+                                _rf_reload_attempted = True
+                                try:
+                                    torque_models = TorqueModelManager.load(artifacts_dir=str(BASE_DIR / "artifacts"))
+                                    print("[torque] model manager reloaded (RF auto-train may have run).")
+                                except Exception as _e:
+                                    print("[torque] model manager reload error:", _e)
+
+                            model_payload = torque_models.score(
+                                pkt.get("torque_actual") or pkt["torque_actual"],
+                                q=pkt.get("q"),
+                                q_dot=pkt.get("q_dot"),
+                                q_ddot=pkt.get("q_ddot"),
+                                curr=pkt.get("curr"),
+                            )
                             pkt.update(model_payload)
                         except Exception as e:
                             print("[torque] model scoring error:", e)
@@ -529,27 +578,64 @@ def run_torque_server() -> None:
                             extra_meta={"worst_joint": worst_j} if worst_j else None,
                         )
 
-                    if model_payload.get("iforest_anomaly"):
-                        log_torque_model_event(
-                            "TORQUE_IFOREST",
-                            model_payload["iforest_score"],
-                            model_payload["iforest_threshold"],
-                            pkt["frame_no"],
-                            pkt["timestamp"],
-                        )
+                    # RF scoring uses its own normalization scale; if provided, override with torque_actual_rf.
+                    rf_payload = model_payload
+                    if (
+                        torque_models is not None
+                        and getattr(torque_models, "graybox_rf", None) is not None
+                        and pkt.get("torque_actual_rf") is not None
+                        and pkt.get("q") is not None
+                        and pkt.get("q_dot") is not None
+                    ):
+                        try:
+                            rf_payload = torque_models.graybox_rf.score(
+                                pkt.get("q"),
+                                pkt.get("q_dot"),
+                                pkt.get("torque_actual_rf"),
+                                q_ddot=pkt.get("q_ddot"),
+                                curr=pkt.get("curr"),
+                            )
+                            # Keep rf_* keys consistent in pkt for downstream UI.
+                            pkt.update(rf_payload)
+                        except Exception as _e:
+                            rf_payload = model_payload
+
+                    rf_anomaly_joints = list(rf_payload.get("rf_anomaly_joints") or [])
+                    if rf_anomaly_joints:
+                        rf_scores = rf_payload.get("rf_scores") or {}
+                        rf_thresholds = rf_payload.get("rf_thresholds") or {}
+
+                        # Emit per-axis events so the torque monitor can reflect RF anomalies per joint.
+                        for joint in rf_anomaly_joints:
+                            score_j = float(rf_scores.get(f"A{joint}", 0.0) or 0.0)
+                            thr_j = float(rf_thresholds.get(f"A{joint}", 0.0) or 0.0)
+                            log_torque_model_event(
+                                "TORQUE_RF",
+                                score_j,
+                                thr_j,
+                                pkt["frame_no"],
+                                pkt["timestamp"],
+                                extra_meta={
+                                    "worst_joint": int(joint),
+                                    "anomaly_joints": rf_anomaly_joints,
+                                    "rf_scores": rf_scores,
+                                },
+                            )
+
+
 
                     # -----------------------------------------------
                     # AUTOENCODER injection (frame-index döngüsel eşleştirme)
                     # -----------------------------------------------
+                    ae_idx = pkt["frame_no"] % len(ae_multiple_list) if ae_multiple_list else pkt["frame_no"]
                     ae_row = get_ae_for_frame(pkt["frame_no"])
                     ae_score     = float(ae_row.get("error", 0))
                     ae_thr       = float(ae_row.get("threshold", ae_multiple_thr or 9.385))
-                    ae_is_anomaly = bool(ae_row.get("is_anomaly", ae_score > ae_thr))
+                    ae_raw_is_anomaly = bool(ae_row.get("is_anomaly", ae_score > ae_thr))
                     ae_root_cause = ae_row.get("root_cause", "")
 
                     pkt["ae_score"]      = round(ae_score, 4)
                     pkt["ae_threshold"]  = round(ae_thr, 4)
-                    pkt["ae_anomaly"]    = ae_is_anomaly
                     pkt["ae_root_cause"] = translate_to_english(ae_root_cause)
 
                     # Single Autoencoder torque anomaly check (events.html and events.log use this)
@@ -561,9 +647,9 @@ def run_torque_server() -> None:
 
                     for i in range(1, 7):
                         feat_name = f"TORQUE_A{i}"
-                        feat_list = ae_single_by_feat.get(feat_name, [])
-                        if feat_list:
-                            row = feat_list[pkt["frame_no"] % len(feat_list)]
+                        feat_dict = ae_single_by_frame_and_feat.get(feat_name, {})
+                        row = feat_dict.get(ae_idx)
+                        if row:
                             err = float(row.get("error", 0))
                             is_anom = bool(row.get("is_anomaly", False))
                             if is_anom:
@@ -595,14 +681,53 @@ def run_torque_server() -> None:
                             severity=severity
                         )
 
-                    # COMBINED (PCA + AE — her ikisi de model anomali)
-                    if ae_is_anomaly and model_payload.get("pca_anomaly"):
+                    # COMBINED (any 2-of-3) and TRIPLE (3-of-3) model anomalies
+                    pca_anom = bool(model_payload.get("pca_anomaly"))
+                    # rf_payload contains the actual RF scores (scored separately from model_payload)
+                    rf_anom = bool(rf_payload.get("rf_anomaly"))
+                    
+                    # Update pkt["ae_anomaly"] and ae_is_anomaly to represent torque anomalies only
+                    pkt["ae_anomaly"] = ae_torque_is_anomaly
+                    ae_is_anomaly = ae_torque_is_anomaly
+                    ae_anom = bool(ae_is_anomaly)
+                    models_hit = [m for m, ok in (("PCA", pca_anom), ("AE", ae_anom), ("RF", rf_anom)) if ok]
+                    worst_joint_combined = (
+                        int(pkt["diffs"].index(max(pkt["diffs"]))) + 1
+                        if pkt.get("diffs")
+                        else (model_payload.get("rf_worst_joint") or worst_single_ae_joint or 1)
+                    )
+
+                    if len(models_hit) >= 3:
                         log_torque_model_event(
-                            "TORQUE_COMBINED",
-                            max(ae_score, model_payload["pca_score"]),
+                            "TORQUE_TRIPLE_COMBINED",
+                            max(ae_score, float(model_payload.get("pca_score") or 0.0), float(model_payload.get("rf_max_residual") or 0.0)),
                             0,
                             pkt["frame_no"],
                             pkt["timestamp"],
+                            extra_meta={
+                                "models": models_hit,
+                                "pca_score": model_payload.get("pca_score"),
+                                "ae_score": ae_score,
+                                "rf_max_residual": model_payload.get("rf_max_residual"),
+                                "worst_joint": worst_joint_combined,
+                            },
+                            severity="CRITICAL",
+                        )
+                    elif len(models_hit) == 2:
+                        log_torque_model_event(
+                            "TORQUE_COMBINED",
+                            max(ae_score, float(model_payload.get("pca_score") or 0.0), float(model_payload.get("rf_max_residual") or 0.0)),
+                            0,
+                            pkt["frame_no"],
+                            pkt["timestamp"],
+                            extra_meta={
+                                "models": models_hit,
+                                "pca_score": model_payload.get("pca_score"),
+                                "ae_score": ae_score,
+                                "rf_max_residual": model_payload.get("rf_max_residual"),
+                                "worst_joint": worst_joint_combined,
+                            },
+                            severity="WARNING",
                         )
 
 
@@ -613,7 +738,6 @@ def run_torque_server() -> None:
                     # -----------------------------------------------
                     any_model_anomaly = (
                         model_payload.get("pca_anomaly")
-                        or model_payload.get("iforest_anomaly")
                         or pkt.get("ae_anomaly", False)
                     )
                     if pkt.get("anomaly") and any_model_anomaly:
@@ -625,8 +749,6 @@ def run_torque_server() -> None:
                             models_active = []
                             if model_payload.get("pca_anomaly"):
                                 models_active.append(f"PCA={model_payload['pca_score']:.4f}")
-                            if model_payload.get("iforest_anomaly"):
-                                models_active.append(f"IForest={model_payload['iforest_score']:.4f}")
                             if pkt.get("ae_anomaly"):
                                 models_active.append(f"AE={pkt['ae_score']:.4f}")
                             event_tt = {
@@ -634,7 +756,7 @@ def run_torque_server() -> None:
                                 "type": "TORQUE_TRIPLE_THREAT",
                                 "severity": "CRITICAL",
                                 "message": (
-                                    f"AYNI FRAME'DE SENSÖR + MODEL ANOMALİSİ! "
+                                    f"SENSOR + MODEL ANOMALY IN SAME FRAME! "
                                     f"Joint {worst_joint} Δ={max_diff:.3f} | "
                                     + ", ".join(models_active)
                                 ),
@@ -668,6 +790,7 @@ def run_torque_server() -> None:
 # FASTAPI (UI)
 # ---------------------------
 app = FastAPI()
+app.add_middleware(GZipMiddleware, minimum_size=1000)  # compress responses > 1KB
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
@@ -701,6 +824,11 @@ def pca_page():
     return FileResponse(str(BASE_DIR / "static" / "pca.html"))
 
 
+@app.get("/rf")
+def rf_page():
+    return FileResponse(str(BASE_DIR / "static" / "rf.html"))
+
+
 @app.get("/api/autoencoder/results")
 def autoencoder_results():
     """Serve the pre-computed autoencoder anomaly results JSON."""
@@ -710,7 +838,10 @@ def autoencoder_results():
             with open(results_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             data = translate_ae_data(data)
-            return JSONResponse(content=data)
+            return JSONResponse(
+                content=data,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+            )
         except Exception as e:
             print("[autoencoder] Error reading results JSON:", e)
             return JSONResponse(
@@ -718,7 +849,6 @@ def autoencoder_results():
                 status_code=500
             )
     else:
-        # Return empty scaffold if file not yet generated
         return JSONResponse(content={
             "meta": {"note": "Run autoencoder/export_results.py to generate results"},
             "multiple": [],
@@ -734,7 +864,10 @@ def pca_results():
         try:
             with open(results_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return JSONResponse(content=data)
+            return JSONResponse(
+                content=data,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+            )
         except Exception as e:
             print("[pca] Error reading results JSON:", e)
             return JSONResponse(
@@ -749,11 +882,58 @@ def pca_results():
         })
 
 
+@app.get("/api/rf/meta")
+def rf_meta():
+    """Serve graybox RF thresholds and model metadata."""
+    meta_path = BASE_DIR / "artifacts" / "graybox_rf_thresholds.json"
+    if meta_path.exists():
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return JSONResponse(
+                content=data,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"},
+            )
+        except Exception as e:
+            return JSONResponse(content={"error": str(e)}, status_code=500)
+    return JSONResponse(
+        content={"error": "graybox_rf_thresholds.json not found — run train_graybox_rf.py first"},
+        status_code=404,
+    )
+
+
+@app.get("/api/rf/results")
+def rf_results():
+    """Serve the pre-computed Random Forest anomaly results JSON."""
+    results_path = BASE_DIR / "artifacts" / "rf_results.json"
+    if results_path.exists():
+        try:
+            with open(results_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return JSONResponse(
+                content=data,
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
+            )
+        except Exception as e:
+            print("[rf] Error reading results JSON:", e)
+            return JSONResponse(
+                content={"error": str(e), "overall": [], "per_feature": {}},
+                status_code=500
+            )
+    else:
+        return JSONResponse(content={
+            "meta": {"note": "Run models/stats/export_rf_results.py to generate results"},
+            "overall": [],
+            "per_feature": {}
+        })
+
+
+
 # ---------------------------
 # ANOMALY HELPERS (backend-side)
 # ---------------------------
 
-def _extract_second_from_ts(ts: str) -> str | None:
+def _extract_second_from_ts(ts: str) -> Optional[str]:
     """Extract HH:mm:ss from various timestamp formats."""
     if not ts:
         return None
@@ -992,7 +1172,7 @@ Tespit Edilen Anomaliler: {json.dumps(real_anomalies, indent=2)}
 
     try:
         response = gemini_model.generate_content(prompt)
-        return {"reply": response.text if response.text else "No AI response generated."}
+        return {"reply": response.text}
 
     except Exception as e:
         print("CHAT ERROR:", e)

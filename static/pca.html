@@ -47,6 +47,10 @@
       transition: background 0.2s ease, color 0.2s ease;
     }
 
+    nav a:visited {
+      color: #945151;
+    }
+
     nav a:hover, nav a.active {
       background: rgba(71, 132, 230, 0.788);
       color: #fff;
@@ -101,12 +105,12 @@
     }
 
     .tab-btn.active {
-      background: #1a3d6b;
+      background: #911212;
       color: #fff;
     }
 
     .tab-btn:hover:not(.active) {
-      background: rgba(26, 61, 107, 0.35);
+      background: rgba(145, 18, 18, 0.25);
       color: #fff;
     }
 
@@ -154,7 +158,7 @@
       transition: 0.3s;
     }
 
-    input:checked + .slider { background: #1a3d6b; }
+    input:checked + .slider { background: #911212; }
     input:checked + .slider::before { transform: translateX(20px); }
 
     .btn {
@@ -171,11 +175,11 @@
     .btn:active { transform: scale(0.97); }
 
     .btn-primary {
-      background: #1a3d6b;
+      background: #911212;
       color: #fff;
     }
 
-    .btn-primary:hover { background: #2254a0; }
+    .btn-primary:hover { background: #b01414; }
 
     .btn-secondary {
       background: #222;
@@ -191,7 +195,7 @@
       align-items: center;
       gap: 0.35rem;
       font-size: 0.82rem;
-      color: #4da6ff;
+      color: #ef4444;
       font-weight: 700;
       opacity: 0;
       transition: opacity 0.3s;
@@ -202,7 +206,7 @@
     .live-dot {
       width: 7px;
       height: 7px;
-      background: #4da6ff;
+      background: #ef4444;
       border-radius: 50%;
       animation: pulse 1.2s infinite;
     }
@@ -240,7 +244,7 @@
     }
 
     select#featureSelect:hover, select#featureSelect:focus {
-      border-color: #1a3d6b;
+      border-color: #911212;
     }
 
     .feature-badge {
@@ -416,7 +420,7 @@
     }
 
     .badge-count {
-      background: #1a3d6b;
+      background: #911212;
       color: #fff;
       border-radius: 20px;
       padding: 0.2rem 0.6rem;
@@ -482,7 +486,7 @@
       height: 64px;
       border-radius: 50%;
       border: none;
-      background: #1a3d6b;
+      background: #911212;
       color: white;
       font-size: 1.1rem;
       font-weight: bold;
@@ -511,7 +515,7 @@
 
     #chat-header {
       padding: 1rem;
-      background: #1a3d6b;
+      background: #911212;
       font-weight: bold;
     }
 
@@ -541,7 +545,7 @@
     }
 
     #send-btn {
-      background: #1a3d6b;
+      background: #911212;
       color: white;
       border: none;
       padding: 1rem;
@@ -561,6 +565,7 @@
     <a href="/events">Events</a>
     <a href="/autoencoder">Autoencoder</a>
     <a href="/pca" class="active">PCA</a>
+    <a href="/rf">Random Forest</a>
   </nav>
 
   <div class="page-header">
@@ -584,7 +589,6 @@
       <span class="live-indicator" id="liveIndicator">
         <span class="live-dot"></span> LIVE
       </span>
-      <button id="replayBtn" class="btn btn-secondary" onclick="replayLive()" title="Replay animation from start">↺ Replay</button>
     </div>
   </div>
 
@@ -600,7 +604,7 @@
   </div>
 
   <!-- ── Model info panel ─────────────────────────────────── -->
-  <div class="info-row" id="infoRow">
+  <div class="info-row" id="infoRow" style="display:none;">
     <div class="info-card" id="pcaInfoCard">
       <div class="ic-title">PCA Model Info</div>
       <div class="ic-row"><span class="ic-key">Components</span><span class="ic-val" id="ic-ncomp">–</span></div>
@@ -716,7 +720,7 @@
                   const val = Math.round(value);
                   if (val < 0) return '';
                   const d = liveDataset.find(item => item.frame_no === val);
-                  if (d) {
+                  if (d && d.timestamp) {
                     const t = (d.timestamp || '').split('.')[0];
                     return `F${val} (${t})`;
                   }
@@ -815,9 +819,14 @@
     // ================================================================
     async function loadData() {
       try {
+        document.getElementById('statSource').textContent = 'Loading…';
+        document.getElementById('statSource').className = 'value';
+
         const res = await fetch('/api/pca/results', { cache: 'no-store' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         allData = await res.json();
+
+        if (allData.error) throw new Error('Server error: ' + allData.error);
 
         // Augment frame numbers
         if (allData.overall) {
@@ -846,10 +855,10 @@
 
       } catch (e) {
         console.error('[pca] Load error:', e);
-        document.getElementById('statSource').textContent = 'Error loading';
+        document.getElementById('statSource').textContent = 'Error: ' + e.message;
         document.getElementById('statSource').className = 'value red';
         document.getElementById('pcaTableBody').innerHTML =
-          '<tr><td colspan="8" class="no-data">Could not load data from /api/pca/results.<br>Run <code>models/stats/export_pca_results.py</code> first.</td></tr>';
+          `<tr><td colspan="8" class="no-data">Could not load data from /api/pca/results.<br><small style="color:#666">${e.message}</small></td></tr>`;
       }
     }
 
@@ -896,6 +905,7 @@
     function populateFeatureDropdown() {
       if (!allData || !allData.per_feature) return;
       const sel = document.getElementById('featureSelect');
+      const savedVal = sel.value;
       sel.innerHTML = '';
       const features = allData.meta && allData.meta.feature_columns
         ? allData.meta.feature_columns
@@ -903,16 +913,23 @@
 
       features.forEach(f => {
         const rows      = (allData.per_feature[f] || []).length;
-        const anomCount = (allData.per_feature[f] || []).filter(r => r.is_anomaly).length;
         const opt = document.createElement('option');
         opt.value = f;
-        opt.textContent = anomCount > 0 ? `${f}  ⚠ ${anomCount} anomaly` : `${f}  (${rows} pts)`;
+        if (liveMode) {
+          opt.textContent = f;
+        } else {
+          const anomCount = (allData.per_feature[f] || []).filter(r => r.is_anomaly).length;
+          opt.textContent = anomCount > 0 ? `${f}  ⚠ ${anomCount} anomaly` : `${f}  (${rows} pts)`;
+        }
         sel.appendChild(opt);
       });
 
-      const withAnom = features.find(f => (allData.per_feature[f] || []).some(r => r.is_anomaly));
-      const withData = withAnom || features[0];
-      if (withData) sel.value = withData;
+      if (savedVal && features.includes(savedVal)) sel.value = savedVal;
+      else {
+        const withAnom = features.find(f => (allData.per_feature[f] || []).some(r => r.is_anomaly));
+        const withData = withAnom || features[0];
+        if (withData) sel.value = withData;
+      }
       currentFeature = sel.value;
     }
 
@@ -1048,8 +1065,8 @@
         document.getElementById('ic-both').textContent = bothCount;
       }
 
-      // Feature badge (per-feature mode)
-      if (currentMode === 'feature') {
+      // Feature badge (per-feature mode) — only in non-live mode
+      if (currentMode === 'feature' && !liveMode) {
         const feat = currentFeature || document.getElementById('featureSelect').value;
         const fa = (allData.per_feature[feat] || []).filter(d => d.is_anomaly).length;
         document.getElementById('featureAnomalyBadge').textContent =
@@ -1058,6 +1075,11 @@
           fa > 0 ? '#ef4444' : '#333';
         document.getElementById('featureAnomalyBadge').style.color =
           fa > 0 ? '#ef4444' : '#aaa';
+      } else if (currentMode === 'feature' && liveMode) {
+        // Reset badge in live mode — counts will grow from 0 as data arrives
+        document.getElementById('featureAnomalyBadge').textContent = '0 anomalies';
+        document.getElementById('featureAnomalyBadge').style.borderColor = '#333';
+        document.getElementById('featureAnomalyBadge').style.color = '#aaa';
       }
 
       if (liveMode) {
@@ -1099,6 +1121,17 @@
       stopLive();
       if (!liveDataset.length) return;
 
+      // Reset counters to 0 — live mode starts fresh
+      document.getElementById('statTotal').textContent = '0';
+      document.getElementById('statAnom').textContent  = '0';
+
+      const badge = document.getElementById('featureAnomalyBadge');
+      if (badge) {
+        badge.textContent = '0 anomalies';
+        badge.style.borderColor = '#333';
+        badge.style.color = '#aaa';
+      }
+
       liveIndex = 0;
       createChart();
       const errorLabel = currentMode === 'overall' ? 'PCA Recon. Error' : `${currentFeature} Error`;
@@ -1118,63 +1151,67 @@
       const wsUrl = `ws://${location.host}/ws/torque`;
       liveWs = new WebSocket(wsUrl);
 
-      let isFirstLiveMessage = true;
+      let lastFrameNo = -1;
+      let totalPlayed = 0;
+      let totalAnomalies = 0;
 
       liveWs.onmessage = (event) => {
         if (!liveMode) return;
         const pkt = JSON.parse(event.data);
-        const targetFrame = pkt.frame_no;
+        const frameNo = pkt.frame_no;
+        if (frameNo === lastFrameNo) return;  // skip duplicates
+        lastFrameNo = frameNo;
 
-        if (isFirstLiveMessage) {
-          while (liveIndex < liveDataset.length && liveDataset[liveIndex].frame_no < targetFrame) {
-            liveIndex++;
+        // Cyclic lookup: pick the matching row from precomputed dataset
+        const d = liveDataset[frameNo % liveDataset.length];
+        if (!d) return;
+
+        const score = getScore(d);
+        const thr   = getThreshold(d);
+        const anom  = isAnomaly(d);
+        const xVal  = frameNo;  // use real frame_no for X axis
+
+        chart.data.datasets[0].data.push({ x: xVal, y: anom ? null : score });
+        chart.data.datasets[0].rawPoints.push({ ...d, frame_no: xVal });
+        chart.data.datasets[1].data.push({ x: xVal, y: thr });
+        chart.data.datasets[2].data.push({ x: xVal, y: anom ? score : null });
+        chart.data.datasets[2].rawPoints.push({ ...d, frame_no: xVal });
+
+        // Sliding window: keep last 120 points visible
+        chart.options.scales.x.min = Math.max(xVal - 120 + 1, 0);
+        chart.options.scales.x.max = xVal;
+
+        // Housekeeping: prevent memory growth
+        if (chart.data.datasets[0].data.length > 240) {
+          chart.data.datasets.forEach(ds => {
+            if (ds.data.length > 240) ds.data.shift();
+            if (ds.rawPoints && ds.rawPoints.length > 240) ds.rawPoints.shift();
+          });
+        }
+
+        chart.update('none');
+
+        totalPlayed++;
+        if (anom) {
+          totalAnomalies++;
+          // Update feature badge incrementally in live mode
+          if (currentMode === 'feature') {
+            const badge = document.getElementById('featureAnomalyBadge');
+            if (badge) {
+              const prev = parseInt(badge.textContent) || 0;
+              const newCount = prev + 1;
+              badge.textContent = `${newCount} anomal${newCount === 1 ? 'y' : 'ies'}`;
+              badge.style.borderColor = '#ef4444';
+              badge.style.color = '#ef4444';
+            }
           }
-          isFirstLiveMessage = false;
         }
+        document.getElementById('statTotal').textContent = totalPlayed.toLocaleString();
+        document.getElementById('statAnom').textContent  = totalAnomalies.toLocaleString();
+      };
 
-        let updated = false;
-        while (liveIndex < liveDataset.length && liveDataset[liveIndex].frame_no <= targetFrame) {
-          const d = liveDataset[liveIndex];
-          liveIndex++;
-          updated = true;
-
-          const score = getScore(d);
-          const thr   = getThreshold(d);
-          const anom  = isAnomaly(d);
-
-          chart.data.datasets[0].data.push({ x: d.frame_no, y: anom ? null : score });
-          chart.data.datasets[0].rawPoints.push(d);
-          chart.data.datasets[1].data.push({ x: d.frame_no, y: thr });
-          chart.data.datasets[2].data.push({ x: d.frame_no, y: anom ? score : null });
-          chart.data.datasets[2].rawPoints.push(d);
-
-          // Sliding window: keep last 120 points
-          chart.options.scales.x.min = Math.max(d.frame_no - 120 + 1, 0);
-          chart.options.scales.x.max = d.frame_no;
-
-          // Housekeeping
-          if (chart.data.datasets[0].data.length > 240) {
-            chart.data.datasets.forEach(ds => {
-              if (ds.data.length > 240) ds.data.shift();
-              if (ds.rawPoints && ds.rawPoints.length > 240) ds.rawPoints.shift();
-            });
-          }
-        }
-
-        if (updated) {
-          chart.update('none');
-
-          // Progressive stats and table
-          const played   = liveDataset.slice(0, liveIndex);
-          const playedAn = played.filter(x => isAnomaly(x));
-          document.getElementById('statTotal').textContent = played.length.toLocaleString();
-          document.getElementById('statAnom').textContent  = playedAn.length.toLocaleString();
-          renderTable(playedAn);
-        }
-
-        if (liveIndex >= liveDataset.length) {
-          stopLive();
-        }
+      liveWs.onclose = () => {
+        document.getElementById('liveIndicator').classList.remove('on');
       };
     }
 
@@ -1193,14 +1230,38 @@
       startLive();
     }
 
-    document.getElementById('liveModeToggle').addEventListener('change', function () {
-      liveMode = this.checked;
-      localStorage.setItem('mindtwin_live_mode', liveMode);
-      if (!liveMode) {
-        stopLive();
-        location.reload();
-      } else {
+    function applySharedLiveMode(enabled, saveToStorage = true) {
+      liveMode = enabled;
+      const toggle = document.getElementById('liveModeToggle');
+      if (toggle && toggle.checked !== liveMode) toggle.checked = liveMode;
+
+      if (saveToStorage) {
+        localStorage.setItem('mindtwin_global_live_mode', String(liveMode));
+      }
+
+      if (!allData) return;
+
+      // Rebuild dropdown to toggle text style (show/hide anomaly counts)
+      populateFeatureDropdown();
+
+      if (liveMode) {
         startLive();
+      } else {
+        stopLive();
+        renderCurrentView(true);
+      }
+    }
+
+    document.getElementById('liveModeToggle').addEventListener('change', function () {
+      applySharedLiveMode(this.checked, true);
+    });
+
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'mindtwin_global_live_mode') {
+        const isLive = e.newValue === 'true';
+        if (liveMode !== isLive) {
+          applySharedLiveMode(isLive, false);
+        }
       }
     });
 
@@ -1288,7 +1349,7 @@
     createChart();
 
     // Read live mode state from localStorage, default to true
-    const savedLiveMode = localStorage.getItem('mindtwin_live_mode');
+    const savedLiveMode = localStorage.getItem('mindtwin_global_live_mode');
     if (savedLiveMode !== null) {
       liveMode = savedLiveMode === 'true';
       document.getElementById('liveModeToggle').checked = liveMode;

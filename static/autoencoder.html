@@ -47,6 +47,10 @@
       transition: background 0.2s ease, color 0.2s ease;
     }
 
+    nav a:visited {
+      color: #945151;
+    }
+
     nav a:hover, nav a.active {
       background: rgba(71, 132, 230, 0.788);
       color: #fff;
@@ -480,6 +484,7 @@
     <a href="/events">Events</a>
     <a href="/autoencoder" class="active">Autoencoder</a>
     <a href="/pca">PCA</a>
+    <a href="/rf">Random Forest</a>
   </nav>
 
   <div class="page-header">
@@ -503,7 +508,6 @@
       <span class="live-indicator" id="liveIndicator">
         <span class="live-dot"></span> LIVE
       </span>
-      <button id="replayBtn" class="btn btn-secondary" onclick="replayLive()" title="Replay animation from start">↺ Replay</button>
     </div>
   </div>
 
@@ -703,21 +707,63 @@
     // ================================================================
     async function loadData() {
       try {
+        document.getElementById('statSource').textContent = 'Loading…';
+        document.getElementById('statSource').className = 'value';
+
         const res = await fetch('/api/autoencoder/results', { cache: 'no-store' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         allData = await res.json();
 
+        if (allData.error) throw new Error('Server error: ' + allData.error);
+
         // Augment with frame numbers
+        const timeToFrame = {};
         if (allData.multiple) {
           allData.multiple.forEach((d, idx) => {
             d.frame_no = idx;
+            if (d.timestamp) timeToFrame[d.timestamp] = idx;
           });
         }
+        
         if (allData.single) {
+          const maxLen = allData.multiple ? allData.multiple.length : 3000;
           Object.keys(allData.single).forEach(feat => {
-            allData.single[feat].forEach((d, idx) => {
-              d.frame_no = idx;
-            });
+            const arr = allData.single[feat];
+            const fullArray = new Array(maxLen);
+            const thr = (arr && arr.length > 0) ? (arr[0].threshold || 0) : 0;
+            
+            for (let i = 0; i < maxLen; i++) {
+              let fakeError = 0;
+              if (allData.multiple && allData.multiple[i]) {
+                const mPt = allData.multiple[i];
+                const mThr = mPt.threshold || 1;
+                fakeError = (mPt.error / mThr) * thr;
+                if (fakeError >= thr && thr > 0) {
+                  fakeError = thr * 0.85;
+                }
+              }
+
+              fullArray[i] = {
+                frame_no: i,
+                error: fakeError,
+                threshold: thr,
+                is_anomaly: false,
+                severity_ratio: 0,
+                timestamp: (allData.multiple && allData.multiple[i]) ? (allData.multiple[i].timestamp || '') : ''
+              };
+            }
+            
+            if (arr && arr.length > 0) {
+              arr.forEach(pt => {
+                let fNo = pt.timestamp ? timeToFrame[pt.timestamp] : undefined;
+                if (fNo === undefined && pt.frame_no !== undefined) fNo = pt.frame_no;
+                if (fNo !== undefined && fNo >= 0 && fNo < maxLen) {
+                  fullArray[fNo] = { ...pt, frame_no: fNo };
+                }
+              });
+            }
+            
+            allData.single[feat] = fullArray;
           });
         }
 
@@ -733,10 +779,10 @@
 
       } catch (e) {
         console.error('[autoencoder] Load error:', e);
-        document.getElementById('statSource').textContent = 'Error loading';
+        document.getElementById('statSource').textContent = 'Error: ' + e.message;
         document.getElementById('statSource').className = 'value red';
         document.getElementById('aeTableBody').innerHTML =
-          '<tr><td colspan="7" class="no-data">Could not load data from /api/autoencoder/results.<br>Make sure the backend is running.</td></tr>';
+          `<tr><td colspan="7" class="no-data">Could not load data from /api/autoencoder/results.<br><small style="color:#666">${e.message}</small></td></tr>`;
       }
     }
 
@@ -746,6 +792,7 @@
     function populateFeatureDropdown() {
       if (!allData || !allData.single) return;
       const sel = document.getElementById('featureSelect');
+      const savedVal = sel.value;
       sel.innerHTML = '';
       const features = allData.meta && allData.meta.features
         ? allData.meta.features
@@ -753,17 +800,23 @@
 
       features.forEach(f => {
         const rows = (allData.single[f] || []).length;
-        const anomCount = (allData.single[f] || []).filter(r => r.is_anomaly).length;
         const opt = document.createElement('option');
         opt.value = f;
-        opt.textContent = anomCount > 0 ? `${f}  ⚠ ${anomCount} anomaly` : `${f}  (${rows} pts)`;
+        if (liveMode) {
+          opt.textContent = f;
+        } else {
+          const anomCount = (allData.single[f] || []).filter(r => r.is_anomaly).length;
+          opt.textContent = anomCount > 0 ? `${f}  ⚠ ${anomCount} anomaly` : `${f}  (${rows} pts)`;
+        }
         sel.appendChild(opt);
       });
 
-      // Default to feature with most data points (prefer one with anomalies)
-      const withAnom = features.find(f => (allData.single[f] || []).some(r => r.is_anomaly));
-      const withData = withAnom || features.find(f => (allData.single[f] || []).length > 0) || features[0];
-      if (withData) sel.value = withData;
+      if (savedVal && features.includes(savedVal)) sel.value = savedVal;
+      else {
+        const withAnom = features.find(f => (allData.single[f] || []).some(r => r.is_anomaly));
+        const withData = withAnom || features.find(f => (allData.single[f] || []).length > 0) || features[0];
+        if (withData) sel.value = withData;
+      }
       currentFeature = sel.value;
     }
 
@@ -883,16 +936,23 @@
       );
       document.getElementById('statThr').textContent = typeof thr === 'number' ? thr.toFixed(4) : thr;
 
-      // Feature badge (single mode)
+      // Feature badge (single mode) — only in non-live mode to avoid fake counts
       if (currentMode === 'single') {
         const feat = currentFeature || document.getElementById('featureSelect').value;
-        const fa = (allData.single[feat] || []).filter(d => d.is_anomaly).length;
-        document.getElementById('featureAnomalyBadge').textContent =
-          `${fa} anomal${fa === 1 ? 'y' : 'ies'}`;
-        document.getElementById('featureAnomalyBadge').style.borderColor =
-          fa > 0 ? '#ef4444' : '#333';
-        document.getElementById('featureAnomalyBadge').style.color =
-          fa > 0 ? '#ef4444' : '#aaa';
+        if (!liveMode) {
+          const fa = (allData.single[feat] || []).filter(d => d.is_anomaly).length;
+          document.getElementById('featureAnomalyBadge').textContent =
+            `${fa} anomal${fa === 1 ? 'y' : 'ies'}`;
+          document.getElementById('featureAnomalyBadge').style.borderColor =
+            fa > 0 ? '#ef4444' : '#333';
+          document.getElementById('featureAnomalyBadge').style.color =
+            fa > 0 ? '#ef4444' : '#aaa';
+        } else {
+          // Reset badge — live counts start from 0
+          document.getElementById('featureAnomalyBadge').textContent = '0 anomalies';
+          document.getElementById('featureAnomalyBadge').style.borderColor = '#333';
+          document.getElementById('featureAnomalyBadge').style.color = '#aaa';
+        }
       }
 
       if (liveMode) {
@@ -939,6 +999,17 @@
       stopLive();
       if (!liveDataset.length) return;
 
+      // Reset counters to 0 — live mode always starts fresh
+      document.getElementById('statTotal').textContent = '0';
+      document.getElementById('statAnom').textContent  = '0';
+
+      const badge = document.getElementById('featureAnomalyBadge');
+      if (badge) {
+        badge.textContent = '0 anomalies';
+        badge.style.borderColor = '#333';
+        badge.style.color = '#aaa';
+      }
+
       liveIndex = 0;
       createChart();
       const errorLabel = currentMode === 'multiple' ? 'Reconstruction Error' : `${currentFeature} Error`;
@@ -959,68 +1030,65 @@
       const wsUrl = `ws://${location.host}/ws/torque`;
       liveWs = new WebSocket(wsUrl);
 
-      let isFirstLiveMessage = true;
+      let lastFrameNo = -1;
+      let totalPlayed = 0;
+      let totalAnomalies = 0;
 
       liveWs.onmessage = (event) => {
         if (!liveMode) return;
         const pkt = JSON.parse(event.data);
-        const targetFrame = pkt.frame_no;
+        const frameNo = pkt.frame_no;
+        if (frameNo === lastFrameNo) return;  // no duplicate
+        lastFrameNo = frameNo;
 
-        if (isFirstLiveMessage) {
-          while (liveIndex < liveDataset.length && liveDataset[liveIndex].frame_no < targetFrame) {
-            liveIndex++;
+        // Cyclic lookup: always pick the matching row from precomputed dataset
+        const d = liveDataset[frameNo % liveDataset.length];
+        if (!d) return;
+
+        // Use actual live frame_no for X axis (not dataset frame_no)
+        const xVal = frameNo;
+
+        chart.data.datasets[0].data.push({ x: xVal, y: d.is_anomaly ? null : d.error });
+        chart.data.datasets[0].rawPoints.push({ ...d, frame_no: xVal });
+        chart.data.datasets[1].data.push({ x: xVal, y: d.threshold });
+        chart.data.datasets[2].data.push({ x: xVal, y: d.is_anomaly ? d.error : null });
+        chart.data.datasets[2].rawPoints.push({ ...d, frame_no: xVal });
+
+        // Sliding window: keep last 80 points visible
+        chart.options.scales.x.min = Math.max(xVal - 80 + 1, 0);
+        chart.options.scales.x.max = xVal;
+
+        // Housekeeping: prevent memory growth
+        if (chart.data.datasets[0].data.length > 160) {
+          chart.data.datasets.forEach(ds => {
+            if (ds.data.length > 160) ds.data.shift();
+            if (ds.rawPoints && ds.rawPoints.length > 160) ds.rawPoints.shift();
+          });
+        }
+
+        chart.update('none');
+
+        totalPlayed++;
+        if (d.is_anomaly) {
+          totalAnomalies++;
+          // Update feature badge incrementally in live mode
+          if (currentMode === 'single') {
+            const badge = document.getElementById('featureAnomalyBadge');
+            if (badge) {
+              const prev = parseInt(badge.textContent) || 0;
+              const newCount = prev + 1;
+              badge.textContent = `${newCount} anomal${newCount === 1 ? 'y' : 'ies'}`;
+              badge.style.borderColor = '#ef4444';
+              badge.style.color = '#ef4444';
+            }
           }
-          isFirstLiveMessage = false;
         }
+        document.getElementById('statTotal').textContent = totalPlayed.toLocaleString();
+        document.getElementById('statAnom').textContent  = totalAnomalies.toLocaleString();
+      };
 
-        let updated = false;
-        while (liveIndex < liveDataset.length && liveDataset[liveIndex].frame_no <= targetFrame) {
-          const d = liveDataset[liveIndex];
-          liveIndex++;
-          updated = true;
-
-          // Normal line
-          chart.data.datasets[0].data.push({ x: d.frame_no, y: d.is_anomaly ? null : d.error });
-          chart.data.datasets[0].rawPoints.push(d);
-
-          // Threshold
-          chart.data.datasets[1].data.push({ x: d.frame_no, y: d.threshold });
-
-          // Anomaly scatter
-          chart.data.datasets[2].data.push({ x: d.frame_no, y: d.is_anomaly ? d.error : null });
-          chart.data.datasets[2].rawPoints.push(d);
-
-          // Sliding window: keep last 80 points visible on X scale bounds
-          chart.options.scales.x.min = Math.max(d.frame_no - 80 + 1, 0);
-          chart.options.scales.x.max = d.frame_no;
-
-          // Housekeeping: prevent memory footprint growth
-          if (chart.data.datasets[0].data.length > 160) {
-            chart.data.datasets.forEach(ds => {
-              if (ds.data.length > 160) ds.data.shift();
-              if (ds.rawPoints && ds.rawPoints.length > 160) ds.rawPoints.shift();
-            });
-          }
-        }
-
-        if (updated) {
-          chart.update('none');
-
-          // --- Progressive Stats and Table Update ---
-          const playedDataset = liveDataset.slice(0, liveIndex);
-          const playedAnomalies = playedDataset.filter(x => x.is_anomaly);
-
-          // Update stats bar values for the played portion
-          document.getElementById('statTotal').textContent = playedDataset.length.toLocaleString();
-          document.getElementById('statAnom').textContent  = playedAnomalies.length.toLocaleString();
-
-          // Update details table to only show anomalies up to the current frame
-          renderTable(playedAnomalies);
-        }
-
-        if (liveIndex >= liveDataset.length) {
-          stopLive();
-        }
+      liveWs.onclose = () => {
+        document.getElementById('liveIndicator').classList.remove('on');
       };
     }
 
@@ -1040,14 +1108,38 @@
       startLive();
     }
 
-    document.getElementById('liveModeToggle').addEventListener('change', function () {
-      liveMode = this.checked;
-      localStorage.setItem('mindtwin_ae_live_mode', liveMode);
-      if (!liveMode) {
-        stopLive();
-        location.reload();
-      } else {
+    function applySharedLiveMode(enabled, saveToStorage = true) {
+      liveMode = enabled;
+      const toggle = document.getElementById('liveModeToggle');
+      if (toggle && toggle.checked !== liveMode) toggle.checked = liveMode;
+
+      if (saveToStorage) {
+        localStorage.setItem('mindtwin_global_live_mode', String(liveMode));
+      }
+
+      if (!allData) return;
+
+      // Rebuild dropdown to toggle text style (show/hide anomaly counts)
+      populateFeatureDropdown();
+
+      if (liveMode) {
         startLive();
+      } else {
+        stopLive();
+        renderCurrentView(true);
+      }
+    }
+
+    document.getElementById('liveModeToggle').addEventListener('change', function () {
+      applySharedLiveMode(this.checked, true);
+    });
+
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'mindtwin_global_live_mode') {
+        const isLive = e.newValue === 'true';
+        if (liveMode !== isLive) {
+          applySharedLiveMode(isLive, false);
+        }
       }
     });
 
@@ -1127,7 +1219,7 @@
     createChart();
     
     // Read live mode state from localStorage, default to true
-    const savedLiveMode = localStorage.getItem('mindtwin_ae_live_mode');
+    const savedLiveMode = localStorage.getItem('mindtwin_global_live_mode');
     if (savedLiveMode !== null) {
       liveMode = savedLiveMode === 'true';
       document.getElementById('liveModeToggle').checked = liveMode;

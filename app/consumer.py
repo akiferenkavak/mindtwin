@@ -1099,6 +1099,46 @@ def get_latest():
 @app.get("/errors")
 def get_errors():
     return error_log[-200:]
+
+
+# ---------------------------
+# LATEST 20 EVENTS HELPER
+# ---------------------------
+def get_latest_20_events() -> list:
+    """
+    Return the 20 newest anomaly events, sorted by timestamp descending.
+    Uses in-memory error_log; falls back to reading events.log if empty.
+    """
+    events = list(error_log)
+    if not events:
+        # Fallback: read from disk (useful after page reload with no live data yet)
+        try:
+            with open(EVENTS_LOG_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            events.append(json.loads(line))
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+    # Sort by timestamp descending (newest first) and take top 20
+    def _ts_key(e):
+        ts = e.get("timestamp", "")
+        try:
+            from datetime import datetime
+            return datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        except Exception:
+            return ts  # string compare fallback
+
+    try:
+        events_sorted = sorted(events, key=_ts_key, reverse=True)
+    except Exception:
+        events_sorted = events[::-1]  # reverse order if sort fails
+
+    return events_sorted[:20]
 class ChatRequest(BaseModel):
     message: str
 
@@ -1107,66 +1147,53 @@ async def chat(req: ChatRequest):
 
     thermal_data   = latest_frame  if latest_frame  else {}
     torque_data    = latest_torque if latest_torque else {}
-    recent_events  = error_log[-20:]
+    recent_events  = get_latest_20_events()
 
-    # Autoencoder summary: sadece GERÇEK anomalileri al (is_anomaly == True)
+    # Autoencoder summary: only REAL anomalies (is_anomaly == True)
     all_multiple = KB_AUTOENCODER.get("multiple", [])
     real_anomalies = [a for a in all_multiple if a.get("is_anomaly") == True]
-    
-    # En yüksek error'a sahip 5 tanesini sırala
     real_anomalies = sorted(real_anomalies, key=lambda x: x.get("error", 0), reverse=True)[:5]
-    
     ae_meta = KB_AUTOENCODER.get("meta", {})
 
     prompt = f"""
-You are MindTwin AI — a specialized industrial AI assistant embedded in a KUKA robotic arm
-digital-twin monitoring dashboard. You ONLY answer questions related to:
-  • KUKA robot arm health monitoring
-  • Thermal anomalies (motor temperatures)
-  • Torque anomalies (joint torques A1-A6)
-  • PCA / Isolation Forest / Autoencoder anomaly detection results
-  • Maintenance recommendations based on sensor data
+You are MindTwin AI — a specialized robot health assistant embedded in a KUKA robotic arm
+digital-twin monitoring dashboard.
 
-If the user asks ANYTHING unrelated to these topics (e.g. general knowledge, coding,
-personal questions, weather, etc.), respond EXACTLY with:
-  "Ben bir KUKA robot izleme chatbotuyum. Sadece robot sağlığı, anomali tespiti ve bakım
-   konularında yardımcı olabilirim."
+You ONLY answer questions strictly related to:
+  - Robot health monitoring (KUKA robot arm)
+  - Thermal anomalies (motor temperatures)
+  - Torque anomalies (joint torques A1–A6)
+  - PCA / Isolation Forest / Random Forest / Autoencoder anomaly detection
+  - Predictive maintenance and actionable maintenance suggestions
 
-── KNOWLEDGE BASE (JSON dosyalarından yüklendi) ──────────────────────────────
+If the user asks ANYTHING unrelated to these topics (general knowledge, coding,
+personal questions, weather, math, etc.), respond EXACTLY with this message and nothing else:
+  "I can only answer questions related to robot health monitoring and anomaly detection."
 
-[1] EVAL REPORT (PCA + IForest model metrikleri):
-{json.dumps(KB_EVAL_REPORT, indent=2)}
+RULES:
+- Answer ONLY in English.
+- Keep answers to 1-2 sentences maximum.
+- Never use markdown, bullet points, or headings.
+- Always base your answer on the latest 20 anomaly events provided below.
+- If system looks normal, say so briefly.
+- If no live data, say "No live data available yet."
+- Give actionable maintenance suggestions when anomalies are present.
+- Do NOT use phrases like "Based on the data", "The robot's health", "Overall status".
 
-[2] PCA EŞİK DEĞERLERİ:
-{json.dumps(KB_PCA_THRESHOLDS, indent=2)}
+── KNOWLEDGE BASE ────────────────────────────────────────────────────────────
 
-[3] ISOLATION FOREST EŞİK DEĞERLERİ:
-{json.dumps(KB_IFOREST_THR, indent=2)}
+[PCA Thresholds]: {json.dumps(KB_PCA_THRESHOLDS)}
+[IForest Threshold]: {json.dumps(KB_IFOREST_THR)}
+[Autoencoder Meta]: {json.dumps(ae_meta)}
+[Top 5 AE Anomalies]: {json.dumps(real_anomalies)}
 
-[4] AUTOENCODER SONUÇLARI (En yüksek 5 anomali):
-Meta: {json.dumps(ae_meta)}
-Tespit Edilen Anomaliler: {json.dumps(real_anomalies, indent=2)}
+── LIVE DATA ─────────────────────────────────────────────────────────────────
 
-── CANLI VERİ ────────────────────────────────────────────────────────────────
+[Latest Thermal Frame]: {json.dumps(thermal_data)}
+[Latest Torque Frame]: {json.dumps(torque_data)}
+[Latest 20 Anomaly Events]: {json.dumps(recent_events)}
 
-[5] Anlık thermal verisi:
-{json.dumps(thermal_data, indent=2)}
-
-[6] Anlık torque verisi:
-{json.dumps(torque_data, indent=2)}
-
-[7] Son 20 anomali eventi:
-{json.dumps(recent_events, indent=2)}
-
-── CEVAP KURALLARI ───────────────────────────────────────────────────────────
-- Kısa ve teknik ol. Dashboard operatörüne konuşur gibi.
-- Markdown, başlık, madde imi kullanma.
-- Çoğu cevabı 2 cümleyle bitir.
-- Anomali yoksa "sistem normal" de.
-- Veri yoksa "canlı veri bekleniyor" de, tahmin yürütme.
-- "Based on the data", "Overall status", "The robot's health" gibi ifadeler kullanma.
-
-── KULLANICI SORUSU ──────────────────────────────────────────────────────────
+── USER QUESTION ─────────────────────────────────────────────────────────────
 {req.message}
 """
 
@@ -1176,8 +1203,180 @@ Tespit Edilen Anomaliler: {json.dumps(real_anomalies, indent=2)}
 
     except Exception as e:
         print("CHAT ERROR:", e)
-        return {"reply": f"Gemini API hatası: {str(e)}"}
+        return {"reply": f"AI error: {str(e)}"}
 
+
+
+# ---------------------------
+# GRAPH EXPLANATION API
+# ---------------------------
+
+_PAGE_PROMPTS = {
+    "thermal": (
+        "You are analyzing the Thermal Monitor graph of a KUKA robot arm. "
+        "The graph shows live temperature readings (T_min, T_mean, T_max in °C) over recent frames. "
+    ),
+    "torque": (
+        "You are analyzing the Torque Monitor graph of a KUKA robot arm. "
+        "The graph shows torque anomaly levels (0=normal, 1=single anomaly, 2=combined, 3=triple) for joints A1-A6. "
+    ),
+    "autoencoder": (
+        "You are analyzing the Autoencoder Anomaly Detection graph of a KUKA robot arm. "
+        "The graph shows reconstruction error vs threshold for torque sensor data. When error exceeds threshold, it signals an anomaly. "
+    ),
+    "pca": (
+        "You are analyzing the PCA Anomaly Detection graph of a KUKA robot arm. "
+        "The graph shows PCA reconstruction error vs threshold for joint torque data. Spikes above the threshold indicate anomalies. "
+    ),
+    "rf": (
+        "You are analyzing the Random Forest (Grey-box Bagging Regressor) Anomaly Detection graph of a KUKA robot arm. "
+        "The graph shows RF residuals per joint (A1-A6) vs their 3σ thresholds. Points above threshold indicate torque anomalies. "
+    ),
+}
+
+_PAGE_EVENT_TYPES = {
+    "thermal":     ["THERMAL"],
+    "torque":      ["TORQUE_PCA", "TORQUE_AUTOENCODER", "TORQUE_RF", "TORQUE_COMBINED", "TORQUE_TRIPLE_COMBINED", "TORQUE_TRIPLE_THREAT"],
+    "autoencoder": ["TORQUE_AUTOENCODER"],
+    "pca":         ["TORQUE_PCA"],
+    "rf":          ["TORQUE_RF"],
+}
+
+_NO_EVENTS_MSG = "No recent anomaly events found. Continue monitoring the system."
+
+
+@app.get("/api/explain/{page}")
+async def explain_page(page: str):
+    """
+    Return a short AI-generated explanation (2-4 sentences) for the given page's graph.
+    Based ONLY on the latest 20 anomaly/event records.
+    """
+    page = page.lower()
+    if page not in _PAGE_PROMPTS:
+        return JSONResponse(content={"explanation": _NO_EVENTS_MSG}, status_code=200)
+
+    recent_events = get_latest_20_events()
+    # Filter to relevant event types for this page
+    event_types = _PAGE_EVENT_TYPES.get(page, [])
+    relevant = [e for e in recent_events if e.get("type", "") in event_types] if event_types else recent_events
+
+    if not relevant and not (page == "thermal" and latest_frame) and not (page in ("torque", "rf", "autoencoder", "pca") and latest_torque):
+        return JSONResponse(content={"explanation": _NO_EVENTS_MSG})
+
+    thermal_ctx = json.dumps(latest_frame) if latest_frame else "No thermal data"
+    torque_ctx  = json.dumps(latest_torque) if latest_torque else "No torque data"
+
+    base_prompt = _PAGE_PROMPTS[page]
+
+    prompt = f"""{base_prompt}
+
+CONTEXT:
+- Latest 20 anomaly events (filtered for this page): {json.dumps(relevant)}
+- Latest thermal frame: {thermal_ctx}
+- Latest torque frame: {torque_ctx}
+
+TASK: Write a plain English explanation of what the current graph shows. Follow ALL rules below:
+- Answer in English only.
+- Maximum 2-4 sentences. No more.
+- State clearly whether the system looks NORMAL, WARNING, or CRITICAL.
+- Mention the most relevant component or joint if applicable (e.g., "Joint A3", "thermal sensor").
+- End with ONE short action sentence such as:
+  "Monitor the temperature.", "Inspect Joint A3.", "Reduce robot load.", "Continue monitoring."
+- Do NOT use markdown, bullet points, headers, or any formatting.
+- Do NOT start with "Based on" or "Overall".
+- If no anomaly events exist, output exactly: "{_NO_EVENTS_MSG}"
+"""
+
+    try:
+        response = gemini_model.generate_content(prompt)
+        explanation = response.text.strip()
+        return JSONResponse(content={"explanation": explanation})
+    except Exception as e:
+        print(f"[explain/{page}] Gemini error:", e)
+        return JSONResponse(content={"explanation": _NO_EVENTS_MSG})
+
+
+@app.get("/api/ai-events-summary")
+async def ai_events_summary():
+    """
+    Return an AI-generated summary of the latest 20 anomaly events for the Events page.
+    """
+    recent_events = get_latest_20_events()
+
+    if not recent_events:
+        return JSONResponse(content={
+            "summary": _NO_EVENTS_MSG,
+            "most_frequent_type": "None",
+            "most_affected_joint": "N/A",
+            "highest_severity": "None",
+            "thermal_status": "normal",
+            "torque_status": "normal",
+            "model_status": "normal",
+            "recommended_action": "Continue monitoring the system."
+        })
+
+    # Compute stats from latest 20 events
+    from collections import Counter
+
+    type_counts = Counter(e.get("type", "UNKNOWN") for e in recent_events)
+    most_frequent_type = type_counts.most_common(1)[0][0] if type_counts else "Unknown"
+
+    joint_counts = Counter()
+    for e in recent_events:
+        wj = e.get("meta", {}).get("worst_joint")
+        if wj:
+            joint_counts[f"A{wj}"] += 1
+    most_affected_joint = joint_counts.most_common(1)[0][0] if joint_counts else "N/A"
+
+    severities = [e.get("severity", "INFO") for e in recent_events]
+    highest_severity = "CRITICAL" if "CRITICAL" in severities else ("WARNING" if "WARNING" in severities else "INFO")
+
+    thermal_events = [e for e in recent_events if e.get("type") == "THERMAL"]
+    torque_events  = [e for e in recent_events if e.get("type", "").startswith("TORQUE_")]
+    thermal_status = "critical" if any(e.get("severity") == "CRITICAL" for e in thermal_events) else ("warning" if thermal_events else "normal")
+    torque_status  = "critical" if any(e.get("severity") == "CRITICAL" for e in torque_events) else ("warning" if torque_events else "normal")
+    model_events   = [e for e in recent_events if e.get("type") in ("TORQUE_PCA", "TORQUE_AUTOENCODER", "TORQUE_RF", "TORQUE_COMBINED", "TORQUE_TRIPLE_COMBINED")]
+    model_status   = "critical" if any(e.get("severity") == "CRITICAL" for e in model_events) else ("warning" if model_events else "normal")
+
+    prompt = f"""You are analyzing the latest 20 anomaly events from a KUKA robot arm digital-twin dashboard.
+
+Latest 20 events: {json.dumps(recent_events)}
+
+Summary statistics computed:
+- Most frequent anomaly type: {most_frequent_type}
+- Most affected joint: {most_affected_joint}
+- Highest severity: {highest_severity}
+- Thermal status: {thermal_status}
+- Torque status: {torque_status}
+- Model anomaly status: {model_status}
+
+Write a concise AI Events Summary in English. It must:
+1. Be 2-3 sentences maximum.
+2. Mention the most frequent anomaly type and most affected joint.
+3. State the overall system health (normal / warning / critical).
+4. End with one short recommended maintenance action.
+5. No markdown, no bullet points, no headers.
+6. Do NOT start with "Based on the data".
+"""
+
+    try:
+        response = gemini_model.generate_content(prompt)
+        ai_text = response.text.strip()
+    except Exception as e:
+        print("[ai-events-summary] Gemini error:", e)
+        ai_text = f"Latest {len(recent_events)} events analyzed. Most frequent: {most_frequent_type}, most affected joint: {most_affected_joint}, highest severity: {highest_severity}."
+
+    return JSONResponse(content={
+        "summary": ai_text,
+        "most_frequent_type": most_frequent_type,
+        "most_affected_joint": most_affected_joint,
+        "highest_severity": highest_severity,
+        "thermal_status": thermal_status,
+        "torque_status": torque_status,
+        "model_status": model_status,
+        "recommended_action": "Inspect " + most_affected_joint + " and monitor closely." if most_affected_joint != "N/A" else "Continue monitoring the system.",
+        "event_count": len(recent_events),
+    })
 
 
 # ---- SETTINGS API (kalıcı threshold) ----

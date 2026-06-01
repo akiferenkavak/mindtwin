@@ -115,8 +115,187 @@
 
   <div id="status">Starting…</div>
 
+  <!-- ── Explain this graph ─────────────────────────── -->
+  <div class="explain-section" id="explainSection">
+    <div class="explain-header">
+      <span class="explain-icon">🤖</span>
+      <span class="explain-title">Explain this graph</span>
+      <button class="explain-refresh" id="explainRefreshBtn" onclick="loadExplanation()" title="Refresh explanation">↻ Refresh</button>
+    </div>
+    <div class="explain-body" id="explainBody">
+      <span class="explain-loading">Generating AI explanation…</span>
+    </div>
+  </div>
+
+  <style>
+    .explain-section {
+      margin-top: 1.25rem;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid #222;
+      border-radius: 14px;
+      padding: 1rem 1.25rem;
+      max-width: 700px;
+    }
+    .explain-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.6rem;
+    }
+    .explain-icon { font-size: 1rem; }
+    .explain-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #911212;
+      flex: 1;
+    }
+    .explain-refresh {
+      background: #1b1b1b;
+      border: 1px solid #2d2d2d;
+      color: #888;
+      border-radius: 6px;
+      padding: 0.2rem 0.55rem;
+      font-size: 0.76rem;
+      cursor: pointer;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    .explain-refresh:hover { color: #ccc; border-color: #555; }
+    .explain-body {
+      font-size: 0.9rem;
+      color: #ccc;
+      line-height: 1.65;
+    }
+    .explain-loading { color: #555; font-style: italic; }
+    .explain-error   { color: #ef4444; font-size: 0.85rem; }
+  </style>
+
   <script>
-    const SLIDE_WINDOW = 30;
+    async function loadExplanation() {
+      const body = document.getElementById('explainBody');
+      body.innerHTML = '<span class="explain-loading">Generating AI explanation…</span>';
+      try {
+        const res = await fetch('/api/explain/thermal', { cache: 'no-store' });
+        const data = await res.json();
+        body.textContent = data.explanation || 'No explanation available.';
+      } catch(e) {
+        body.innerHTML = '<span class="explain-error">Could not load explanation. Backend may not be running.</span>';
+      }
+    }
+    // Load on page ready
+    window.addEventListener('DOMContentLoaded', loadExplanation);
+  </script>
+
+  <button id="chat-toggle">KUKA AI</button>
+
+  <div id="chatbot" class="hidden">
+    <div id="chat-header">
+      🤖 MindTwin AI Assistant
+    </div>
+    <div id="chat-note">📊 Answers are based on the latest 20 anomaly events.</div>
+
+    <div id="chat-messages"></div>
+
+    <div id="chat-input-area">
+      <input id="chat-input" placeholder="Ask about robot health…" />
+      <button id="send-btn">Send</button>
+    </div>
+  </div>
+
+  <style>
+    #chat-toggle {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      border: none;
+      background: #911212;
+      color: white;
+      font-size: 1.1rem;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+      z-index: 9999;
+    }
+
+    #chatbot {
+      position: fixed;
+      right: 20px;
+      bottom: 100px;
+      width: 340px;
+      height: 440px;
+      background: #181818;
+      border: 1px solid #333;
+      border-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+      z-index: 9999;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    #chat-header {
+      padding: 0.85rem 1rem;
+      background: #911212;
+      font-weight: bold;
+      font-size: 0.9rem;
+    }
+
+    #chat-note {
+      padding: 0.4rem 1rem;
+      background: #1a1a1a;
+      border-bottom: 1px solid #2d2d2d;
+      font-size: 0.75rem;
+      color: #888;
+    }
+
+    #chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      font-size: 0.95rem;
+    }
+
+    .msg-user {
+      margin-bottom: 1rem;
+      color: #7dd3fc;
+    }
+
+    .msg-ai {
+      margin-bottom: 1rem;
+      color: #c4f5c4;
+    }
+
+    #chat-input-area {
+      display: flex;
+      border-top: 1px solid #333;
+    }
+
+    #chat-input {
+      flex: 1;
+      background: #111;
+      border: none;
+      color: white;
+      padding: 1rem;
+      outline: none;
+    }
+
+    #send-btn {
+      background: #911212;
+      color: white;
+      border: none;
+      padding: 1rem;
+      cursor: pointer;
+    }
+  </style>
+
 
     const KELVIN_OFFSET = 273.15;
     function toCelsius(v) {
@@ -249,104 +428,8 @@
     // sayfa açılınca backend'deki kaydedilmiş threshold'u çek
     loadThresholdFromBackend();
   </script>
-  <button id="chat-toggle">KUKA AI</button>
 
-  <div id="chatbot" class="hidden">
-    <div id="chat-header">
-      MindTwin AI Assistant
-    </div>
 
-    <div id="chat-messages"></div>
-
-    <div id="chat-input-area">
-      <input id="chat-input" placeholder="Ask about anomalies..." />
-      <button id="send-btn">Send</button>
-    </div>
-  </div>
-
-  <style>
-    #chat-toggle {
-      position: fixed;
-      right: 20px;
-      bottom: 20px;
-      width: 64px;
-      height: 64px;
-      border-radius: 50%;
-      border: none;
-      background: #911212;
-      color: white;
-      font-size: 1.1rem;
-      font-weight: bold;
-      cursor: pointer;
-      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
-      z-index: 9999;
-    }
-
-    #chatbot {
-      position: fixed;
-      right: 20px;
-      bottom: 100px;
-      width: 340px;
-      height: 420px;
-      background: #181818;
-      border: 1px solid #333;
-      border-radius: 16px;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-      z-index: 9999;
-    }
-
-    .hidden {
-      display: none !important;
-    }
-
-    #chat-header {
-      padding: 1rem;
-      background: #911212;
-      font-weight: bold;
-    }
-
-    #chat-messages {
-      flex: 1;
-      overflow-y: auto;
-      padding: 1rem;
-      font-size: 0.95rem;
-    }
-
-    .msg-user {
-      margin-bottom: 1rem;
-      color: #7dd3fc;
-    }
-
-    .msg-ai {
-      margin-bottom: 1rem;
-      color: #c4f5c4;
-    }
-
-    #chat-input-area {
-      display: flex;
-      border-top: 1px solid #333;
-    }
-
-    #chat-input {
-      flex: 1;
-      background: #111;
-      border: none;
-      color: white;
-      padding: 1rem;
-      outline: none;
-    }
-
-    #send-btn {
-      background: #911212;
-      color: white;
-      border: none;
-      padding: 1rem;
-      cursor: pointer;
-    }
-  </style>
 
   <script>
     const chatToggle = document.getElementById("chat-toggle");

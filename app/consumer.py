@@ -11,8 +11,9 @@ import threading
 import asyncio
 import os
 import time
+import re
+from datetime import datetime
 from pathlib import Path
-import google.generativeai as genai
 from dotenv import load_dotenv
 from fastapi import Request
 from fastapi.middleware.gzip import GZipMiddleware
@@ -28,11 +29,22 @@ import uvicorn
 BASE_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(BASE_DIR / "app" / ".env")   # absolute path – her zaman bulunur
 
-# API key: .env'den oku, yoksa doğrudan kullan
-_API_KEY = os.getenv("GOOGLE_API_KEY") or "AIzaSyB7n4hUvikR9uU6AEXXci7Wp0tJmcNDnY4"
-genai.configure(api_key=_API_KEY)
+try:
+    import google.generativeai as genai  # type: ignore
+except Exception:
+    genai = None
+    print("[ai] google-generativeai is not available; /chat will use rule-based summaries.")
 
-gemini_model = genai.GenerativeModel("gemini-2.5-flash")
+# Optional Gemini wiring (not required for the current /chat behavior).
+gemini_model = None
+if genai is not None:
+    try:
+        # API key: .env'den oku, yoksa doğrudan kullan
+        _API_KEY = os.getenv("GOOGLE_API_KEY") or "AIzaSyB7n4hUvikR9uU6AEXXci7Wp0tJmcNDnY4"
+        genai.configure(api_key=_API_KEY)
+        gemini_model = genai.GenerativeModel("gemini-2.5-flash")
+    except Exception:
+        gemini_model = None
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
@@ -1102,81 +1114,201 @@ def get_errors():
 class ChatRequest(BaseModel):
     message: str
 
+_CHAT_ALLOWED_HINTS = (
+    # Core domain
+    "anomaly",
+    "anomalies",
+    "event",
+    "events",
+    "fault",
+    "alarm",
+    "robot",
+    "health",
+    "monitor",
+    "monitoring",
+    "dashboard",
+    "torque",
+    "thermal",
+    "temperature",
+    "pca",
+    "autoencoder",
+    "isolation forest",
+    "random forest",
+    # KUKA joints
+    "joint",
+    "axis",
+    "a1",
+    "a2",
+    "a3",
+    "a4",
+    "a5",
+    "a6",
+)
+
+
+def _is_chat_related(message: str) -> bool:
+    msg = (message or "").strip().lower()
+    if not msg:
+        return True
+    return any(h in msg for h in _CHAT_ALLOWED_HINTS)
+
+
+def _parse_event_ts(ts: str) -> Optional[datetime]:
+    if not ts:
+        return None
+    raw = str(ts).strip()
+    try:
+        # Handles "YYYY-MM-DD HH:MM:SS(.ffffff)" and ISO variants.
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except Exception:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except Exception:
+            continue
+    return None
+
+
+def _latest_events(limit: int = 20) -> list[dict]:
+    items = []
+    for i, ev in enumerate(error_log):
+        if not isinstance(ev, dict):
+            continue
+        ts = _parse_event_ts(ev.get("timestamp"))
+        # Unparseable timestamps go last; preserve append order for ties.
+        sort_key = ts or datetime.min
+        items.append((sort_key, i, ev))
+    items.sort(key=lambda t: (t[0], t[1]), reverse=True)  # newest first
+    return [t[2] for t in items[:limit]]
+
+
+def _pick_top_joint(events: list[dict]) -> Optional[int]:
+    # Weighted by severity so repeated critical joints win.
+    weights = {"CRITICAL": 3, "WARNING": 2, "INFO": 1}
+    joint_scores: dict[int, int] = {}
+    joint_re = re.compile(r"\bA([1-6])\b", re.IGNORECASE)
+    for ev in events:
+        meta = ev.get("meta") if isinstance(ev.get("meta"), dict) else {}
+        joint = meta.get("worst_joint")
+        if joint is None:
+            m = joint_re.search(str(ev.get("message", "")))
+            if m:
+                try:
+                    joint = int(m.group(1))
+                except Exception:
+                    joint = None
+        try:
+            joint_i = int(joint) if joint is not None else None
+        except Exception:
+            joint_i = None
+        if joint_i is None:
+            continue
+        sev = str(ev.get("severity") or "INFO").upper()
+        joint_scores[joint_i] = joint_scores.get(joint_i, 0) + weights.get(sev, 1)
+    if not joint_scores:
+        return None
+    return max(joint_scores.items(), key=lambda kv: kv[1])[0]
+
+
+def _summarize_recent_events(events: list[dict], user_message: str = "") -> str:
+    if not events:
+        return "No recent anomaly events found. Continue monitoring the system."
+
+    def _wants_severity_detail(msg: str) -> bool:
+        m = (msg or "").lower()
+        return any(
+            k in m
+            for k in (
+                "severe",
+                "severity",
+                "serious",
+                "critical",
+                "kritik",
+                "cok severe",
+                "çok severe",
+                "çok ciddi",
+                "ciddi",
+            )
+        )
+
+    severity_counts = {"CRITICAL": 0, "WARNING": 0, "INFO": 0}
+    type_counts: dict[str, int] = {}
+    combined2 = 0  # 2-signal agreement
+    combined3 = 0  # 3-signal agreement
+    thermal_cnt = 0
+    for ev in events:
+        sev = str(ev.get("severity") or "INFO").upper()
+        if sev not in severity_counts:
+            sev = "INFO"
+        severity_counts[sev] += 1
+        typ = str(ev.get("type") or "UNKNOWN").upper()
+        type_counts[typ] = type_counts.get(typ, 0) + 1
+        if typ == "TORQUE_COMBINED":
+            combined2 += 1
+        elif typ in ("TORQUE_TRIPLE_COMBINED", "TORQUE_TRIPLE_THREAT"):
+            combined3 += 1
+        elif typ == "THERMAL":
+            thermal_cnt += 1
+
+    top_type_raw = max(type_counts.items(), key=lambda kv: kv[1])[0] if type_counts else "EVENTS"
+    top_joint = _pick_top_joint(events)
+
+    critical = severity_counts["CRITICAL"]
+    warning = severity_counts["WARNING"]
+    info = severity_counts["INFO"]
+
+    parts: list[str] = []
+    if _wants_severity_detail(user_message):
+        # Focus on agreement-based "severe" signal instead of naming models.
+        parts.append(
+            f"In the latest {len(events)} anomaly events, {combined3} show strong agreement across signals and {combined2} show medium agreement."
+        )
+        if top_joint is not None:
+            parts.append(f"Joint A{top_joint} appears most often, so start your checks there.")
+        else:
+            parts.append("Start by checking the joint or component that repeats most in the event list.")
+        if combined3 > 0 or critical > 0:
+            if top_joint is not None:
+                parts.append(f"Inspect Joint A{top_joint}, reduce robot load/speed, and involve a technician if it continues.")
+            else:
+                parts.append("Reduce robot load/speed and involve a technician if it continues.")
+        else:
+            parts.append("Continue monitoring.")
+    else:
+        # General summary: short, practical, and not model-named.
+        if top_joint is not None:
+            parts.append(
+                f"In the latest {len(events)} anomaly events, Joint A{top_joint} shows up the most, so it may need investigation."
+            )
+        else:
+            parts.append(f"In the latest {len(events)} anomaly events, one component repeats more than others and may need investigation.")
+        parts.append(
+            f"There are {critical} critical and {warning} warning alerts; {combined3} are high-confidence (multi-signal) and {combined2} are medium-confidence."
+        )
+        if thermal_cnt > 0:
+            parts.append("Also keep an eye on temperature, since thermal alerts appeared in the same window.")
+        if critical > 0:
+            if top_joint is not None:
+                parts.append(f"Inspect Joint A{top_joint} and consider reducing robot load.")
+            else:
+                parts.append("Inspect the repeated component and consider reducing robot load.")
+        elif warning > 0:
+            parts.append("Continue monitoring and review the warning alerts.")
+        else:
+            parts.append("Continue monitoring.")
+
+    # Keep 2–4 sentences.
+    return " ".join(parts[:4])
+
 @app.post("/chat")
 async def chat(req: ChatRequest):
 
-    thermal_data   = latest_frame  if latest_frame  else {}
-    torque_data    = latest_torque if latest_torque else {}
-    recent_events  = error_log[-20:]
+    if not _is_chat_related(req.message):
+        return {"reply": "I can only answer questions related to robot health monitoring and anomaly detection."}
 
-    # Autoencoder summary: sadece GERÇEK anomalileri al (is_anomaly == True)
-    all_multiple = KB_AUTOENCODER.get("multiple", [])
-    real_anomalies = [a for a in all_multiple if a.get("is_anomaly") == True]
-    
-    # En yüksek error'a sahip 5 tanesini sırala
-    real_anomalies = sorted(real_anomalies, key=lambda x: x.get("error", 0), reverse=True)[:5]
-    
-    ae_meta = KB_AUTOENCODER.get("meta", {})
-
-    prompt = f"""
-You are MindTwin AI — a specialized industrial AI assistant embedded in a KUKA robotic arm
-digital-twin monitoring dashboard. You ONLY answer questions related to:
-  • KUKA robot arm health monitoring
-  • Thermal anomalies (motor temperatures)
-  • Torque anomalies (joint torques A1-A6)
-  • PCA / Isolation Forest / Autoencoder anomaly detection results
-  • Maintenance recommendations based on sensor data
-
-If the user asks ANYTHING unrelated to these topics (e.g. general knowledge, coding,
-personal questions, weather, etc.), respond EXACTLY with:
-  "Ben bir KUKA robot izleme chatbotuyum. Sadece robot sağlığı, anomali tespiti ve bakım
-   konularında yardımcı olabilirim."
-
-── KNOWLEDGE BASE (JSON dosyalarından yüklendi) ──────────────────────────────
-
-[1] EVAL REPORT (PCA + IForest model metrikleri):
-{json.dumps(KB_EVAL_REPORT, indent=2)}
-
-[2] PCA EŞİK DEĞERLERİ:
-{json.dumps(KB_PCA_THRESHOLDS, indent=2)}
-
-[3] ISOLATION FOREST EŞİK DEĞERLERİ:
-{json.dumps(KB_IFOREST_THR, indent=2)}
-
-[4] AUTOENCODER SONUÇLARI (En yüksek 5 anomali):
-Meta: {json.dumps(ae_meta)}
-Tespit Edilen Anomaliler: {json.dumps(real_anomalies, indent=2)}
-
-── CANLI VERİ ────────────────────────────────────────────────────────────────
-
-[5] Anlık thermal verisi:
-{json.dumps(thermal_data, indent=2)}
-
-[6] Anlık torque verisi:
-{json.dumps(torque_data, indent=2)}
-
-[7] Son 20 anomali eventi:
-{json.dumps(recent_events, indent=2)}
-
-── CEVAP KURALLARI ───────────────────────────────────────────────────────────
-- Kısa ve teknik ol. Dashboard operatörüne konuşur gibi.
-- Markdown, başlık, madde imi kullanma.
-- Çoğu cevabı 2 cümleyle bitir.
-- Anomali yoksa "sistem normal" de.
-- Veri yoksa "canlı veri bekleniyor" de, tahmin yürütme.
-- "Based on the data", "Overall status", "The robot's health" gibi ifadeler kullanma.
-
-── KULLANICI SORUSU ──────────────────────────────────────────────────────────
-{req.message}
-"""
-
-    try:
-        response = gemini_model.generate_content(prompt)
-        return {"reply": response.text}
-
-    except Exception as e:
-        print("CHAT ERROR:", e)
-        return {"reply": f"Gemini API hatası: {str(e)}"}
+    recent_events = _latest_events(limit=20)
+    return {"reply": _summarize_recent_events(recent_events, user_message=req.message)}
 
 
 

@@ -128,6 +128,8 @@ def _plot_timeseries_with_threshold(
     y_label: str,
     x_label: str = "sample",
     secondary: Optional[dict] = None,
+    anomaly_label: str = "anomaly",
+    anomaly_color: str = "#d62728",
 ) -> None:
     plt.figure(figsize=(12, 4), dpi=180)
     ax = plt.gca()
@@ -139,7 +141,14 @@ def _plot_timeseries_with_threshold(
         ax.axhline(float(threshold), lw=1.2, label="threshold", color="#ff7f0e", alpha=0.9)
 
     if anomaly_mask is not None and anomaly_mask.any():
-        ax.scatter(x[anomaly_mask], y[anomaly_mask], s=10, color="#d62728", label="anomaly", zorder=3)
+        ax.scatter(
+            x[anomaly_mask],
+            y[anomaly_mask],
+            s=10,
+            color=anomaly_color,
+            label=anomaly_label,
+            zorder=3,
+        )
 
     if secondary is not None:
         ax2 = ax.twinx()
@@ -159,15 +168,28 @@ def _plot_timeseries_with_threshold(
                 ax2.axhline(float(thr2), lw=1.0, color=secondary.get("thr_color", "#9467bd"), alpha=0.9, label="threshold2")
         ax2.set_ylabel(secondary.get("y_label", ""))
 
-        # legend merge
-        lines = ax.get_lines() + ax2.get_lines()
-        labels = [l.get_label() for l in lines]
-        if anomaly_mask is not None and anomaly_mask.any():
-            # scatter not included in get_lines
-            handles, hlbl = ax.get_legend_handles_labels()
-            ax.legend(handles, hlbl, loc="upper right", frameon=False)
-        else:
-            ax.legend(lines, labels, loc="upper right", frameon=False)
+        sec_anom = secondary.get("anomaly_mask")
+        if sec_anom is not None and np.asarray(sec_anom, dtype=bool).any():
+            ax2.scatter(
+                x[sec_anom],
+                secondary["y"][sec_anom],
+                s=10,
+                color=secondary.get("anomaly_color", "#7c3aed"),
+                label=secondary.get("anomaly_label", "secondary_anomaly"),
+                marker=secondary.get("anomaly_marker", "x"),
+                zorder=3,
+            )
+
+        # Legend merge (include scatters)
+        handles1, labels1 = ax.get_legend_handles_labels()
+        handles2, labels2 = ax2.get_legend_handles_labels()
+        handles = handles1 + handles2
+        labels = labels1 + labels2
+        uniq = {}
+        for h, l in zip(handles, labels):
+            if l and l not in uniq:
+                uniq[l] = h
+        ax.legend(list(uniq.values()), list(uniq.keys()), loc="upper right", frameon=False)
     else:
         ax.legend(loc="upper right", frameon=False)
 
@@ -258,27 +280,43 @@ def _pca_graphs(pca_json: Path, out_dir: Path) -> list[Path]:
     if_score = np.array([_safe_float(r.get("iforest_score")) for r in overall], dtype=float)
     if_thr = np.array([_safe_float(r.get("iforest_threshold", meta.get("iforest_threshold", 0.0))) for r in overall], dtype=float)
 
-    anomaly = np.array([bool(r.get("model_anomaly")) for r in overall], dtype=bool)
+    pca_anomaly = np.array([bool(r.get("pca_anomaly") or r.get("is_anomaly")) for r in overall], dtype=bool)
+    if_anomaly = np.array([bool(r.get("iforest_anomaly")) for r in overall], dtype=bool)
 
     out1 = out_dir / "pca_timeseries_dual_axis.png"
-    _plot_timeseries_with_threshold(
-        out_path=out1,
-        x=x,
-        y=pca_score,
-        threshold=pca_thr,
-        anomaly_mask=anomaly,
-        title="PCA — Scores with Thresholds (Dual Axis)",
-        y_label="pca_score",
-        x_label="time (s)" if np.nanmax(x) > 0 else "sample",
-        secondary={
-            "y": if_score,
-            "threshold": if_thr,
-            "label": "iforest_score",
-            "color": "#2ca02c",
-            "thr_color": "#9467bd",
-            "y_label": "iforest_score",
-        },
+    fig, (ax_top, ax_bot) = plt.subplots(
+        nrows=2,
+        ncols=1,
+        figsize=(12, 6),
+        dpi=180,
+        sharex=True,
     )
+
+    x_label = "time (s)" if np.nanmax(x) > 0 else "sample"
+
+    # Top: PCA
+    ax_top.plot(x, pca_score, lw=1.2, label="pca_score", color="#1f77b4")
+    ax_top.plot(x, pca_thr, lw=1.2, label="threshold", color="#ff7f0e", alpha=0.9)
+    if pca_anomaly.any():
+        ax_top.scatter(x[pca_anomaly], pca_score[pca_anomaly], s=10, color="#ef4444", label="pca_anomaly", zorder=3)
+    ax_top.set_ylabel("pca_score")
+    ax_top.grid(True, alpha=0.25)
+    ax_top.legend(loc="upper right", frameon=False)
+    ax_top.set_title("PCA — Scores with Thresholds (Two Panels)")
+
+    # Bottom: IForest
+    ax_bot.plot(x, if_score, lw=1.2, label="iforest_score", color="#2ca02c")
+    ax_bot.plot(x, if_thr, lw=1.2, label="threshold", color="#9467bd", alpha=0.9)
+    if if_anomaly.any():
+        ax_bot.scatter(x[if_anomaly], if_score[if_anomaly], s=10, color="#7c3aed", label="iforest_anomaly", marker="x", zorder=3)
+    ax_bot.set_ylabel("iforest_score")
+    ax_bot.set_xlabel(x_label)
+    ax_bot.grid(True, alpha=0.25)
+    ax_bot.legend(loc="upper right", frameon=False)
+
+    fig.tight_layout()
+    fig.savefig(out1)
+    plt.close(fig)
 
     worst_features = [r.get("worst_feature") for r in overall if r.get("model_anomaly") and r.get("worst_feature")]
     counts = Counter(worst_features)
